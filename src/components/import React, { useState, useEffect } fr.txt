@@ -1,0 +1,508 @@
+import React, { useState, useEffect } from 'react';
+import { useNMR } from '../NMRContext';
+
+export default function HardwareView() {
+  const { state, dispatch } = useNMR();
+
+  // Local interactive UI states mirroring nmr-simulator-stage2 functionality
+  const [sampleBusy, setSampleBusy] = useState(false);
+  const [spinnerBusy, setSpinnerBusy] = useState(false);
+  const [bootLogOpen, setBootLogOpen] = useState(false);
+  const [bootLogs, setBootLogs] = useState<{ key: string; label: string; status: string }[]>([]);
+  const [activeSheet, setActiveSheet] = useState<string | null>(null);
+
+  // Computed helper statuses
+  const powerState = state.power || 'OFF'; // 'OFF' | 'STARTING' | 'READY'
+  const sampleStatus = state.sampleState || 'NONE'; // 'NONE' | 'LOADING' | 'POSITIONED' | 'EJECTING' | 'EJECTED'
+  const spinRate = state.spinRate || 0;
+  const spinnerStatus = state.spinnerStatus || 'STOPPED'; // 'STOPPED' | 'ACCELERATING' | 'SPINNING' | 'DECELERATING'
+  const airState = state.airState || 'OFF';
+
+  // Sample status labels & button helpers
+  const sampleStatusText = () => {
+    switch (sampleStatus) {
+      case 'NONE': case 'EJECTED': return 'NOT LOADED';
+      case 'LOADING': return 'LOADING';
+      case 'POSITIONED': return 'LOADED';
+      case 'EJECTING': return 'EJECTING';
+      default: return sampleStatus;
+    }
+  };
+
+  const sampleButtonLabel = () => {
+    switch (sampleStatus) {
+      case 'NONE': case 'EJECTED': return 'LOAD SAMPLE';
+      case 'LOADING': return 'LOADING SAMPLE...';
+      case 'POSITIONED': return 'EJECT SAMPLE';
+      case 'EJECTING': return 'EJECTING...';
+      default: return 'LOAD SAMPLE';
+    }
+  };
+
+  // Capsule Y-position mapping for smooth animation
+  const getCapsuleY = () => {
+    switch (sampleStatus) {
+      case 'LOADING': return 60;
+      case 'POSITIONED': return 150;
+      case 'EJECTING': return 90;
+      default: return 26;
+    }
+  };
+
+  // Power toggle handler (matches stage2 startup sequence)
+  const togglePower = () => {
+    if (powerState === 'OFF') {
+      setBootLogOpen(true);
+      const steps = [
+        { key: 'boot', label: 'SYSTEM BOOT', dur: 300 },
+        { key: 'console', label: 'NMR CONSOLE INITIALIZING', dur: 400 },
+        { key: 'rf', label: 'RF SYSTEM INITIALIZING', dur: 400 },
+        { key: 'gradient', label: 'GRADIENT SYSTEM INITIALIZING', dur: 400 },
+        { key: 'probe', label: 'PROBE COMMUNICATION', dur: 300 },
+        { key: 'magnet', label: 'MAGNET STATUS CHECK', dur: 300 },
+        { key: 'ready', label: 'SYSTEM READY', dur: 200 }
+      ];
+      setBootLogs(steps.map(s => ({ key: s.key, label: s.label, status: '…' })));
+      
+      dispatch({ type: 'SET_POWER', payload: 'STARTING' });
+
+      let cumulative = 0;
+      steps.forEach((step, idx) => {
+        cumulative += step.dur;
+        setTimeout(() => {
+          setBootLogs(prev => prev.map(item => item.key === step.key ? { ...item, status: 'OK' } : item));
+          if (idx === steps.length - 1) {
+            dispatch({ type: 'SET_POWER', payload: 'READY' });
+            setTimeout(() => setBootLogOpen(false), 800);
+          }
+        }, cumulative);
+      });
+    } else {
+      dispatch({ type: 'SET_POWER', payload: 'OFF' });
+      setBootLogOpen(false);
+    }
+  };
+
+  // Sample Load / Eject Sequences
+  const handleSampleAction = async () => {
+    if (sampleBusy) return;
+    if (sampleStatus === 'NONE' || sampleStatus === 'EJECTED') {
+      setSampleBusy(true);
+      dispatch({ type: 'SET_SAMPLE_STATE', payload: 'LOADING' });
+      dispatch({ type: 'SET_AIR_STATE', payload: 'SUPPORT' });
+      await new Promise(r => setTimeout(r, 1200));
+      dispatch({ type: 'SET_SAMPLE_STATE', payload: 'POSITIONED' });
+      setSampleBusy(false);
+    } else if (sampleStatus === 'POSITIONED') {
+      setSampleBusy(true);
+      if (spinnerStatus !== 'STOPPED') {
+        dispatch({ type: 'SET_SPINNER_STATUS', payload: 'STOPPED' });
+        dispatch({ type: 'SET_SPIN_RATE', payload: 0 });
+        await new Promise(r => setTimeout(r, 600));
+      }
+      dispatch({ type: 'SET_SAMPLE_STATE', payload: 'EJECTING' });
+      dispatch({ type: 'SET_AIR_STATE', payload: 'EJECT' });
+      await new Promise(r => setTimeout(r, 1200));
+      dispatch({ type: 'SET_SAMPLE_STATE', payload: 'EJECTED' });
+      dispatch({ type: 'SET_AIR_STATE', payload: 'OFF' });
+      setSampleBusy(false);
+    }
+  };
+
+  // Spinner Start / Stop Sequences
+  const handleSpinnerAction = async () => {
+    if (spinnerBusy || powerState !== 'READY' || sampleStatus !== 'POSITIONED') return;
+    setSpinnerBusy(true);
+    if (spinnerStatus === 'STOPPED') {
+      dispatch({ type: 'SET_SPINNER_STATUS', payload: 'ACCELERATING' });
+      dispatch({ type: 'SET_AIR_STATE', payload: 'DRIVE' });
+      for (let r = 5; r <= 20; r += 5) {
+        await new Promise(res => setTimeout(res, 400));
+        dispatch({ type: 'SET_SPIN_RATE', payload: r });
+      }
+      dispatch({ type: 'SET_SPINNER_STATUS', payload: 'SPINNING' });
+    } else {
+      dispatch({ type: 'SET_SPINNER_STATUS', payload: 'DECELERATING' });
+      for (let r = 15; r >= 0; r -= 5) {
+        await new Promise(res => setTimeout(res, 400));
+        dispatch({ type: 'SET_SPIN_RATE', payload: r });
+      }
+      dispatch({ type: 'SET_SPINNER_STATUS', payload: 'STOPPED' });
+      dispatch({ type: 'SET_AIR_STATE', payload: 'SUPPORT' });
+    }
+    setSpinnerBusy(false);
+  };
+
+  const isSpinning = spinnerStatus === 'SPINNING' || spinnerStatus === 'ACCELERATING' || spinnerStatus === 'DECELERATING';
+
+  return (
+    <div className="relative flex flex-col h-full w-full bg-[#060b14] text-[#dfeef4] font-sans overflow-x-hidden select-none">
+      {/* Background Grid Pattern */}
+      <div className="absolute inset-0 z-0 pointer-events-none opacity-40 bg-[linear-gradient(rgba(91,227,240,0.045)_1px,transparent_1px),linear-gradient(90deg,rgba(91,227,240,0.045)_1px,transparent_1px)] bg-[size:28px_28px]" />
+
+      {/* Topbar Console Bar */}
+      <header className="relative z-20 flex items-center justify-between gap-2 px-3.5 py-3 bg-[linear-gradient(180deg,rgba(10,20,34,0.95),rgba(8,16,28,0.85))] border-b border-[rgba(120,190,215,0.16)] backdrop-blur-md">
+        <button 
+          onClick={() => setActiveSheet('system')}
+          className="flex items-center justify-center w-10 h-10 rounded-lg border border-[rgba(120,190,215,0.32)] bg-[#101e33] text-[#5be3f0] cursor-pointer hover:bg-[#152640] transition active:scale-95"
+        >
+          <svg viewBox="0 0 24 24" fill="none" width="18" height="18"><path d="M3 6h18M3 12h18M3 18h18" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>
+        </button>
+
+        <div className="flex-1 text-center min-w-0">
+          <div className="font-mono text-[13px] tracking-[0.14em] font-semibold text-[#dfeef4] truncate">NMR SPECTROMETER</div>
+          <div className="font-mono text-[10.5px] text-[#7591a6] tracking-[0.08em] mt-0.5">500 MHz &nbsp;·&nbsp; 1H &nbsp;·&nbsp; SYSTEM: {powerState}</div>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-full border border-[rgba(120,190,215,0.16)] bg-[#101e33] font-mono text-[10.5px] text-[#7591a6]">
+            <span className={`w-1.5 h-1.5 rounded-full ${powerState === 'READY' ? 'bg-[#3fe0a5] shadow-[0_0_8px_#3fe0a5]' : powerState === 'STARTING' ? 'bg-[#f0ab3d] animate-pulse shadow-[0_0_8px_#f0ab3d]' : 'bg-[#425468]'}`} />
+            <span>{powerState}</span>
+          </div>
+          <button 
+            onClick={togglePower}
+            className={`w-10 h-10 rounded-lg border flex items-center justify-center transition cursor-pointer ${
+              powerState === 'READY' ? 'text-[#5be3f0] border-[rgba(91,227,240,0.5)] shadow-[0_0_14px_rgba(56,200,220,0.35)] bg-[#101e33]' :
+              powerState === 'STARTING' ? 'text-[#f0ab3d] border-[rgba(240,171,61,0.5)] shadow-[0_0_14px_rgba(240,171,61,0.25)] bg-[#101e33]' :
+              'text-[#7591a6] border-[rgba(120,190,215,0.16)] bg-[#101e33]'
+            }`}
+          >
+            <svg viewBox="0 0 24 24" fill="none" className="w-[18px] h-[18px]"><path d="M12 2v9" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/><path d="M6.5 6.5a8 8 0 1 0 11 0" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>
+          </button>
+        </div>
+      </header>
+
+      {/* Boot Log Overlay Dropdown */}
+      {bootLogOpen && (
+        <div className="relative z-20 max-w-[640px] w-full mx-auto px-3.5 py-2">
+          <div className="bg-[rgba(8,16,28,0.95)] border border-[rgba(120,190,215,0.16)] rounded-xl p-3 font-mono text-[11.5px] text-[#7591a6] leading-relaxed">
+            {bootLogs.map((log) => (
+              <div key={log.key} className="flex justify-between gap-2">
+                <span className={log.status === 'OK' ? 'text-[#5be3f0]' : 'text-[#425468]'}>{log.label}</span>
+                <span className={log.status === 'OK' ? 'text-[#3fe0a5]' : 'text-[#7591a6]'}>{log.status}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Main Hardware Stage Workspace */}
+      <main className="relative z-10 flex-1 max-w-[640px] w-full mx-auto px-3.5 pt-4 pb-16 space-y-3.5">
+
+        {/* 1. SAMPLE ACCESS */}
+        <div className="flex gap-2">
+          <div className="w-[116px] pt-3.5 text-right pr-2 shrink-0">
+            <span className="font-mono text-[10px] tracking-wider text-[#7591a6] flex items-center justify-end gap-1.5">
+              <span className="w-1 h-1 rounded-full bg-[#425468]" />SAMPLE ACCESS
+            </span>
+          </div>
+          <div className="w-5 pt-5 shrink-0"><div className="h-[1px] bg-[rgba(120,190,215,0.32)]" /></div>
+          <div className={`flex-1 rounded-[10px] p-3 border transition bg-[linear-gradient(180deg,#101e33,#0b1728)] ${powerState === 'READY' ? 'border-[rgba(120,190,215,0.32)] shadow-[inset_0_0_22px_rgba(56,200,220,0.35)] opacity-100' : 'border-[rgba(120,190,215,0.16)] opacity-50'}`}>
+            <div className="flex items-center justify-between mb-2">
+              <span className="font-mono text-[11px] font-semibold text-[#dfeef4]">SAMPLE CHANGER</span>
+              <span className={`font-mono text-[9.5px] px-2 py-0.5 rounded border ${sampleStatus === 'POSITIONED' ? 'text-[#5be3f0] border-[rgba(91,227,240,0.5)]' : 'text-[#7591a6] border-[rgba(120,190,215,0.16)]'}`}>
+                {sampleStatusText()}
+              </span>
+            </div>
+            
+            <div className="flex justify-center py-1">
+              <svg viewBox="0 0 300 46" width="300" height="46" className="w-full h-auto">
+                <rect x="10" y="10" width="280" height="26" rx="6" fill="none" stroke="currentColor" strokeOpacity="0.35"/>
+                <circle cx="150" cy="23" r="7" fill={sampleStatus === 'POSITIONED' ? '#5be3f0' : 'none'} fillOpacity={0.6} stroke="currentColor" strokeWidth="2"/>
+                <line x1="20" y1="23" x2="280" y2="23" stroke="currentColor" strokeOpacity="0.15" strokeDasharray="3 4"/>
+              </svg>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2 mt-2">
+              <div className="bg-[rgba(0,0,0,0.22)] border border-[rgba(120,190,215,0.16)] rounded-lg p-2">
+                <div className="font-mono text-[8.5px] text-[#425468]">STATUS</div>
+                <div className="font-mono text-[13px] text-[#5be3f0] font-semibold mt-0.5">{sampleStatusText()}</div>
+              </div>
+              <div className="bg-[rgba(0,0,0,0.22)] border border-[rgba(120,190,215,0.16)] rounded-lg p-2">
+                <div className="font-mono text-[8.5px] text-[#425468]">POSITION</div>
+                <div className="font-mono text-[13px] text-[#5be3f0] font-semibold mt-0.5">{sampleStatus === 'POSITIONED' ? 'POSITIONED' : 'HOME'}</div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2 mt-2">
+              <div className="bg-[rgba(0,0,0,0.22)] border border-[rgba(120,190,215,0.16)] rounded-lg p-2">
+                <div className="font-mono text-[8.5px] text-[#425468]">SPINNER</div>
+                <div className="font-mono text-[13px] text-[#5be3f0] font-semibold mt-0.5">{spinnerStatus} · {spinRate} Hz</div>
+              </div>
+              <div className="bg-[rgba(0,0,0,0.22)] border border-[rgba(120,190,215,0.16)] rounded-lg p-2">
+                <div className="font-mono text-[8.5px] text-[#425468]">AIR</div>
+                <div className="font-mono text-[13px] text-[#5be3f0] font-semibold mt-0.5">{airState}</div>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 mt-2.5 p-2 bg-[rgba(0,0,0,0.2)] border border-[rgba(120,190,215,0.16)] rounded-lg">
+              <span className="font-mono text-[9px] text-[#425468]">AIR FLOW</span>
+              <span className={`w-1.5 h-1.5 rounded-full ${airState !== 'OFF' ? 'bg-[#5be3f0] shadow-[0_0_7px_#5be3f0]' : 'bg-[#425468]'}`} />
+              <div className="flex-1 h-3.5 overflow-hidden">
+                <svg viewBox="0 0 120 14" preserveAspectRatio="none" className="w-full h-full">
+                  <path d="M0 7 L10 7 L14 2 L20 12 L26 2 L32 12 L38 2 L44 12 L50 7 L120 7" fill="none" stroke={airState !== 'OFF' ? '#5be3f0' : 'currentColor'} strokeOpacity={airState !== 'OFF' ? 0.75 : 0.2} strokeWidth="1.6" />
+                </svg>
+              </div>
+              <span className={`font-mono text-[9.5px] ${airState !== 'OFF' ? 'text-[#5be3f0]' : 'text-[#7591a6]'}`}>AIR FLOW: {airState}</span>
+            </div>
+
+            <div className="mt-3 flex gap-2">
+              <button 
+                onClick={handleSampleAction}
+                disabled={sampleBusy}
+                className={`flex-1 font-mono text-[11.5px] tracking-wider py-3 rounded-lg border transition cursor-pointer text-center ${
+                  sampleStatus === 'POSITIONED' 
+                    ? 'bg-[rgba(240,171,61,0.08)] border-[rgba(240,171,61,0.45)] text-[#f0ab3d] hover:bg-[rgba(240,171,61,0.14)]' 
+                    : 'bg-[rgba(91,227,240,0.1)] border-[rgba(91,227,240,0.5)] text-[#5be3f0] hover:bg-[rgba(91,227,240,0.16)]'
+                }`}
+              >
+                {sampleButtonLabel()}
+              </button>
+              {sampleStatus === 'POSITIONED' && (
+                <button 
+                  onClick={handleSpinnerAction}
+                  disabled={spinnerBusy}
+                  className="px-4 font-mono text-[11px] tracking-wider rounded-lg border border-[rgba(91,227,240,0.5)] bg-[rgba(91,227,240,0.15)] text-[#5be3f0] hover:bg-[rgba(91,227,240,0.25)] transition cursor-pointer"
+                >
+                  {isSpinning ? 'STOP SPIN' : 'START SPIN'}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* 2. SUPERCONDUCTING MAGNET (Hero Visual) */}
+        <div className="flex gap-2">
+          <div className="w-[116px] pt-3.5 text-right pr-2 shrink-0">
+            <span className="font-mono text-[10px] tracking-wider text-[#7591a6] flex items-center justify-end gap-1.5">
+              <span className="w-1 h-1 rounded-full bg-[#425468]" />SUPERCONDUCTING MAGNET
+            </span>
+          </div>
+          <div className="w-5 pt-5 shrink-0"><div className="h-[1px] bg-[rgba(120,190,215,0.32)]" /></div>
+          <div className="flex-1 rounded-[10px] p-3.5 border border-[rgba(120,190,215,0.32)] bg-[linear-gradient(180deg,#101e33,#0b1728)] shadow-[0_0_1px_rgba(91,227,240,0.5)]">
+            <div className="flex items-center justify-between mb-2">
+              <span className="font-mono text-[11px] font-semibold text-[#dfeef4]">MAGNET / BORE / PROBE</span>
+              <span className="font-mono text-[9.5px] px-2 py-0.5 rounded border text-[#5be3f0] border-[rgba(91,227,240,0.5)]">READY</span>
+            </div>
+
+            <div className="flex justify-center py-1">
+              <svg viewBox="0 0 300 260" width="300" height="260" className="w-full h-auto">
+                <rect x="55" y="8" width="190" height="220" rx="26" fill="#0a1a2c" stroke="#5be3f0" strokeOpacity="0.4"/>
+                <line x1="55" y1="55" x2="245" y2="55" stroke="currentColor" strokeOpacity="0.18"/>
+                <line x1="55" y1="95" x2="245" y2="95" stroke="currentColor" strokeOpacity="0.18"/>
+                <line x1="55" y1="185" x2="245" y2="185" stroke="currentColor" strokeOpacity="0.18"/>
+                <rect x="132" y="8" width="36" height="220" fill="#020609" stroke="#5be3f0" strokeOpacity="0.55"/>
+                <ellipse cx="150" cy="70" rx="17" ry="5" fill="none" stroke="currentColor" strokeOpacity="0.25"/>
+                <ellipse cx="150" cy="150" rx="17" ry="5" fill="none" stroke="currentColor" strokeOpacity="0.25"/>
+                
+                {/* Animated Sample Capsule inside Bore */}
+                <g transform={`translate(150, ${getCapsuleY()})`} className="transition-transform duration-1000">
+                  <g className={isSpinning ? 'animate-spin origin-center' : ''}>
+                    <rect x="-6" y="-14" width="12" height="30" rx="5" fill="#5be3f0" fillOpacity="0.55" stroke="#5be3f0"/>
+                    <line x1="0" y1="-13" x2="0" y2="-7" stroke="#eafcff" strokeOpacity="0.9" strokeWidth="1.5"/>
+                  </g>
+                </g>
+
+                <g transform="translate(150,205)">
+                  <ellipse cx="0" cy="0" rx="14" ry="6" fill="none" stroke="#f0ab3d" strokeOpacity="0.7" strokeWidth="1.6"/>
+                  <ellipse cx="0" cy="8" rx="14" ry="6" fill="none" stroke="#f0ab3d" strokeOpacity="0.4" strokeWidth="1.6"/>
+                </g>
+                <text x="150" y="245" textAnchor="middle" fontFamily="monospace" fontSize="9" fill="currentColor" fillOpacity="0.5" letterSpacing="1">PROBE</text>
+                <text x="30" y="120" textAnchor="middle" fontFamily="monospace" fontSize="8.5" fill="currentColor" fillOpacity="0.4" letterSpacing="0.5" transform="rotate(-90 30 120)">SAMPLE BORE</text>
+                <text x="270" y="120" textAnchor="middle" fontFamily="monospace" fontSize="8.5" fill="currentColor" fillOpacity="0.4" letterSpacing="0.5" transform="rotate(90 270 120)">MAGNET HOUSING</text>
+              </svg>
+            </div>
+
+            <div className="grid grid-cols-3 gap-2 mt-2">
+              <div className="bg-[rgba(0,0,0,0.22)] border border-[rgba(120,190,215,0.16)] rounded-lg p-2">
+                <div className="font-mono text-[8.5px] text-[#425468]">FIELD</div>
+                <div className="font-mono text-[13px] text-[#5be3f0] font-semibold mt-0.5">11.7 T</div>
+              </div>
+              <div className="bg-[rgba(0,0,0,0.22)] border border-[rgba(120,190,215,0.16)] rounded-lg p-2">
+                <div className="font-mono text-[8.5px] text-[#425468]">FREQUENCY</div>
+                <div className="font-mono text-[13px] text-[#5be3f0] font-semibold mt-0.5">500 MHz</div>
+              </div>
+              <div className="bg-[rgba(0,0,0,0.22)] border border-[rgba(120,190,215,0.16)] rounded-lg p-2">
+                <div className="font-mono text-[8.5px] text-[#425468]">STATUS</div>
+                <div className="font-mono text-[13px] text-[#5be3f0] font-semibold mt-0.5">READY</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* 3. GRADIENT SYSTEM */}
+        <div className="flex gap-2">
+          <div className="w-[116px] pt-3.5 text-right pr-2 shrink-0">
+            <span className="font-mono text-[10px] tracking-wider text-[#7591a6] flex items-center justify-end gap-1.5">
+              <span className="w-1 h-1 rounded-full bg-[#425468]" />GRADIENT SYSTEM
+            </span>
+          </div>
+          <div className="w-5 pt-5 shrink-0"><div className="h-[1px] bg-[rgba(120,190,215,0.32)]" /></div>
+          <div className={`flex-1 rounded-[10px] p-3 border transition bg-[linear-gradient(180deg,#101e33,#0b1728)] ${powerState === 'READY' ? 'border-[rgba(120,190,215,0.32)] shadow-[inset_0_0_22px_rgba(56,200,220,0.35)] opacity-100' : 'border-[rgba(120,190,215,0.16)] opacity-50'}`}>
+            <div className="flex items-center justify-between mb-2">
+              <span className="font-mono text-[11px] font-semibold text-[#dfeef4]">GRADIENT DRIVER</span>
+              <span className={`font-mono text-[9.5px] px-2 py-0.5 rounded border ${powerState === 'READY' ? 'text-[#5be3f0] border-[rgba(91,227,240,0.5)]' : 'text-[#7591a6] border-[rgba(120,190,215,0.16)]'}`}>
+                {powerState === 'READY' ? 'READY' : 'OFF'}
+              </span>
+            </div>
+            <div className="flex justify-center py-1">
+              <svg viewBox="0 0 300 40" width="300" height="40" className="w-full h-auto">
+                <path d="M10 20 L60 20 L80 8 L100 32 L120 8 L140 32 L160 8 L180 32 L200 20 L290 20" fill="none" stroke="currentColor" strokeOpacity="0.5" strokeWidth="1.6"/>
+              </svg>
+            </div>
+          </div>
+        </div>
+
+        {/* 4. SHIM SYSTEM */}
+        <div className="flex gap-2">
+          <div className="w-[116px] pt-3.5 text-right pr-2 shrink-0">
+            <span className="font-mono text-[10px] tracking-wider text-[#7591a6] flex items-center justify-end gap-1.5">
+              <span className="w-1 h-1 rounded-full bg-[#425468]" />SHIM SYSTEM
+            </span>
+          </div>
+          <div className="w-5 pt-5 shrink-0"><div className="h-[1px] bg-[rgba(120,190,215,0.32)]" /></div>
+          <div className={`flex-1 rounded-[10px] p-3 border transition bg-[linear-gradient(180deg,#101e33,#0b1728)] ${powerState === 'READY' ? 'border-[rgba(120,190,215,0.32)] shadow-[inset_0_0_22px_rgba(56,200,220,0.35)] opacity-100' : 'border-[rgba(120,190,215,0.16)] opacity-50'}`}>
+            <div className="flex items-center justify-between mb-2">
+              <span className="font-mono text-[11px] font-semibold text-[#dfeef4]">SHIM COILS</span>
+              <span className={`font-mono text-[9.5px] px-2 py-0.5 rounded border ${powerState === 'READY' ? 'text-[#5be3f0] border-[rgba(91,227,240,0.5)]' : 'text-[#7591a6] border-[rgba(120,190,215,0.16)]'}`}>
+                STANDBY
+              </span>
+            </div>
+            <div className="flex justify-center py-1">
+              <svg viewBox="0 0 300 40" width="300" height="40" className="w-full h-auto">
+                <circle cx="60" cy="20" r="10" fill="none" stroke="currentColor" strokeOpacity="0.45"/>
+                <circle cx="150" cy="20" r="10" fill="none" stroke="currentColor" strokeOpacity="0.45"/>
+                <circle cx="240" cy="20" r="10" fill="none" stroke="currentColor" strokeOpacity="0.45"/>
+                <line x1="70" y1="20" x2="140" y2="20" stroke="currentColor" strokeOpacity="0.2"/>
+                <line x1="160" y1="20" x2="230" y2="20" stroke="currentColor" strokeOpacity="0.2"/>
+              </svg>
+            </div>
+          </div>
+        </div>
+
+        {/* 5. RF ELECTRONICS */}
+        <div className="flex gap-2">
+          <div className="w-[116px] pt-3.5 text-right pr-2 shrink-0">
+            <span className="font-mono text-[10px] tracking-wider text-[#7591a6] flex items-center justify-end gap-1.5">
+              <span className="w-1 h-1 rounded-full bg-[#425468]" />RF ELECTRONICS
+            </span>
+          </div>
+          <div className="w-5 pt-5 shrink-0"><div className="h-[1px] bg-[rgba(120,190,215,0.32)]" /></div>
+          <div className={`flex-1 rounded-[10px] p-3 border transition bg-[linear-gradient(180deg,#101e33,#0b1728)] ${powerState === 'READY' ? 'border-[rgba(120,190,215,0.32)] shadow-[inset_0_0_22px_rgba(56,200,220,0.35)] opacity-100' : 'border-[rgba(120,190,215,0.16)] opacity-50'}`}>
+            <div className="flex items-center justify-between mb-2">
+              <span className="font-mono text-[11px] font-semibold text-[#dfeef4]">RF CONSOLE</span>
+              <span className={`font-mono text-[9.5px] px-2 py-0.5 rounded border ${powerState === 'READY' ? 'text-[#5be3f0] border-[rgba(91,227,240,0.5)]' : 'text-[#7591a6] border-[rgba(120,190,215,0.16)]'}`}>
+                {powerState === 'READY' ? 'READY' : 'OFF'}
+              </span>
+            </div>
+            <div className="flex justify-center py-1">
+              <svg viewBox="0 0 300 40" width="300" height="40" className="w-full h-auto">
+                <path d="M20 20 a8 8 0 0 1 16 0 a12 12 0 0 1 24 0 a16 16 0 0 1 32 0" fill="none" stroke="currentColor" strokeOpacity="0.5" strokeWidth="1.6"/>
+                <rect x="230" y="10" width="60" height="20" rx="3" fill="none" stroke="currentColor" strokeOpacity="0.4"/>
+                <line x1="240" y1="16" x2="280" y2="16" stroke="currentColor" strokeOpacity="0.3"/>
+                <line x1="240" y1="22" x2="270" y2="22" stroke="currentColor" strokeOpacity="0.3"/>
+              </svg>
+            </div>
+          </div>
+        </div>
+
+        {/* 6. ELECTRONICS BAY */}
+        <div className="flex gap-2">
+          <div className="w-[116px] pt-3.5 text-right pr-2 shrink-0">
+            <span className="font-mono text-[10px] tracking-wider text-[#7591a6] flex items-center justify-end gap-1.5">
+              <span className="w-1 h-1 rounded-full bg-[#425468]" />ELECTRONICS BAY
+            </span>
+          </div>
+          <div className="w-5 pt-5 shrink-0"><div className="h-[1px] bg-[rgba(120,190,215,0.32)]" /></div>
+          <div className={`flex-1 rounded-[10px] p-3 border transition bg-[linear-gradient(180deg,#101e33,#0b1728)] ${powerState === 'READY' ? 'border-[rgba(120,190,215,0.32)] shadow-[inset_0_0_22px_rgba(56,200,220,0.35)] opacity-100' : 'border-[rgba(120,190,215,0.16)] opacity-50'}`}>
+            <div className="flex items-center justify-between mb-2">
+              <span className="font-mono text-[11px] font-semibold text-[#dfeef4]">NMR CONSOLE</span>
+              <span className={`font-mono text-[9.5px] px-2 py-0.5 rounded border ${powerState === 'READY' ? 'text-[#5be3f0] border-[rgba(91,227,240,0.5)]' : 'text-[#7591a6] border-[rgba(120,190,215,0.16)]'}`}>
+                {powerState === 'READY' ? 'READY' : 'OFF'}
+              </span>
+            </div>
+            <div className="flex justify-center py-1">
+              <svg viewBox="0 0 300 40" width="300" height="40" className="w-full h-auto">
+                <rect x="20" y="8" width="70" height="24" rx="3" fill="none" stroke="currentColor" strokeOpacity="0.4"/>
+                <rect x="100" y="8" width="70" height="24" rx="3" fill="none" stroke="currentColor" strokeOpacity="0.4"/>
+                <rect x="180" y="8" width="100" height="24" rx="3" fill="none" stroke="currentColor" strokeOpacity="0.4"/>
+                <circle cx="35" cy="20" r="3" fill="currentColor" fillOpacity="0.5"/>
+                <circle cx="115" cy="20" r="3" fill="currentColor" fillOpacity="0.5"/>
+                <circle cx="195" cy="20" r="3" fill="currentColor" fillOpacity="0.5"/>
+              </svg>
+            </div>
+          </div>
+        </div>
+
+        {/* 7. DATA SYSTEM */}
+        <div className="flex gap-2">
+          <div className="w-[116px] pt-3.5 text-right pr-2 shrink-0">
+            <span className="font-mono text-[10px] tracking-wider text-[#7591a6] flex items-center justify-end gap-1.5">
+              <span className="w-1 h-1 rounded-full bg-[#425468]" />DATA SYSTEM
+            </span>
+          </div>
+          <div className="w-5 pt-5 shrink-0"><div className="h-[1px] bg-[rgba(120,190,215,0.32)]" /></div>
+          <div className={`flex-1 rounded-[10px] p-3 border transition bg-[linear-gradient(180deg,#101e33,#0b1728)] ${powerState === 'READY' ? 'border-[rgba(120,190,215,0.32)] shadow-[inset_0_0_22px_rgba(56,200,220,0.35)] opacity-100' : 'border-[rgba(120,190,215,0.16)] opacity-50'}`}>
+            <div className="flex items-center justify-between mb-2">
+              <span className="font-mono text-[11px] font-semibold text-[#dfeef4]">ACQUISITION COMPUTER</span>
+              <span className={`font-mono text-[9.5px] px-2 py-0.5 rounded border ${powerState === 'READY' ? 'text-[#5be3f0] border-[rgba(91,227,240,0.5)]' : 'text-[#7591a6] border-[rgba(120,190,215,0.16)]'}`}>
+                {powerState === 'READY' ? 'READY' : 'OFF'}
+              </span>
+            </div>
+            <div className="flex justify-center py-1">
+              <svg viewBox="0 0 300 60" width="300" height="60" className="w-full h-auto">
+                <rect x="100" y="8" width="100" height="34" rx="4" fill="none" stroke="currentColor" strokeOpacity="0.45"/>
+                <path d="M112 32 L124 32 L130 18 L138 40 L146 24 L152 32 L188 32" fill="none" stroke="currentColor" strokeOpacity="0.6" strokeWidth="1.4"/>
+                <line x1="140" y1="42" x2="140" y2="50" stroke="currentColor" strokeOpacity="0.4"/>
+                <line x1="118" y1="50" x2="162" y2="50" stroke="currentColor" strokeOpacity="0.4"/>
+              </svg>
+            </div>
+          </div>
+        </div>
+
+      </main>
+
+      {/* Interactive Control Sheet Modal / Drawer */}
+      {activeSheet && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-[rgba(3,7,14,0.6)] backdrop-blur-xs">
+          <div className="w-full max-w-[640px] bg-[linear-gradient(180deg,#0d1c30,#08131f)] border border-[rgba(120,190,215,0.32)] rounded-t-2xl p-5 shadow-2xl max-h-[78vh] flex flex-col">
+            <div className="w-9 h-1 rounded-full bg-[rgba(120,190,215,0.32)] mx-auto mb-3" />
+            <div className="flex items-center justify-between mb-4">
+              <span className="font-mono text-[13px] tracking-widest text-[#5be3f0] uppercase">{activeSheet} PANEL</span>
+              <button onClick={() => setActiveSheet(null)} className="text-[#7591a6] hover:text-white font-mono text-sm cursor-pointer">✕</button>
+            </div>
+            <div className="space-y-3 font-mono text-xs overflow-y-auto flex-1 pb-4">
+              <div className="flex justify-between py-2 border-b border-[rgba(120,190,215,0.08)]">
+                <span className="text-[#7591a6]">SYSTEM POWER</span>
+                <span className={powerState === 'READY' ? 'text-[#3fe0a5]' : 'text-[#f0ab3d]'}>{powerState}</span>
+              </div>
+              <div className="flex justify-between py-2 border-b border-[rgba(120,190,215,0.08)]">
+                <span className="text-[#7591a6]">SAMPLE STATUS</span>
+                <span className="text-[#5be3f0]">{sampleStatusText()}</span>
+              </div>
+              <div className="flex justify-between py-2 border-b border-[rgba(120,190,215,0.08)]">
+                <span className="text-[#7591a6]">SPINNER RATE</span>
+                <span className="text-[#5be3f0]">{spinRate} Hz</span>
+              </div>
+            </div>
+            <div className="pt-3 border-t border-[rgba(120,190,215,0.16)] flex gap-2">
+              <button 
+                onClick={togglePower}
+                className="flex-1 py-3 rounded-lg border border-[rgba(91,227,240,0.5)] bg-[rgba(91,227,240,0.1)] text-[#5be3f0] font-mono text-xs tracking-wider cursor-pointer hover:bg-[rgba(91,227,240,0.2)]"
+              >
+                {powerState === 'OFF' ? 'TURN ON SYSTEM' : 'SHUTDOWN SYSTEM'}
+              </button>
+              <button 
+                onClick={() => setActiveSheet(null)}
+                className="px-4 py-3 rounded-lg border border-[rgba(120,190,215,0.16)] bg-[#101e33] text-[#7591a6] font-mono text-xs cursor-pointer hover:text-white"
+              >
+                CLOSE
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+    </div>
+  );
+}

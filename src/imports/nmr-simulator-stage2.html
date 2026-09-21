@@ -1,0 +1,1647 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1" />
+<title>NMR Spectrometer — Control Console</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#060b14;
+    --bg-deep:#040810;
+    --panel:#0b1728;
+    --panel-2:#101e33;
+    --panel-3:#0d1a2c;
+    --border: rgba(120,190,215,0.16);
+    --border-strong: rgba(120,190,215,0.32);
+    --cyan:#5be3f0;
+    --cyan-soft: rgba(91,227,240,0.5);
+    --cyan-dim: rgba(91,227,240,0.18);
+    --cyan-glow: rgba(56,200,220,0.35);
+    --text:#dfeef4;
+    --text-dim:#7591a6;
+    --text-faint:#425468;
+    --amber:#f0ab3d;
+    --green:#3fe0a5;
+    --red:#f2586b;
+    --mono: 'IBM Plex Mono', ui-monospace, monospace;
+    --sans: 'IBM Plex Sans', system-ui, sans-serif;
+    --radius: 10px;
+  }
+
+  *{ box-sizing:border-box; -webkit-tap-highlight-color: transparent; }
+  html,body{ height:100%; }
+  body{
+    margin:0;
+    background:
+      radial-gradient(ellipse 900px 500px at 50% -10%, rgba(56,150,200,0.14), transparent 60%),
+      var(--bg);
+    color:var(--text);
+    font-family:var(--sans);
+    overflow-x:hidden;
+    min-height:100vh;
+  }
+
+  #app{
+    position:relative;
+    min-height:100vh;
+    display:flex;
+    flex-direction:column;
+  }
+
+  /* ---------- background grid ---------- */
+  .grid-bg{
+    position:fixed;
+    inset:0;
+    z-index:0;
+    background-image:
+      linear-gradient(rgba(91,227,240,0.045) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(91,227,240,0.045) 1px, transparent 1px);
+    background-size: 28px 28px;
+    mask-image: radial-gradient(ellipse 100% 80% at 50% 20%, black 40%, transparent 90%);
+    pointer-events:none;
+  }
+
+  /* ---------- top bar ---------- */
+  .topbar{
+    position:relative;
+    z-index:20;
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:10px;
+    padding: 12px 14px;
+    background: linear-gradient(180deg, rgba(10,20,34,0.95), rgba(8,16,28,0.85));
+    border-bottom:1px solid var(--border);
+    backdrop-filter: blur(6px);
+  }
+  .icon-btn{
+    display:flex; align-items:center; justify-content:center;
+    width:40px; height:40px;
+    border-radius:8px;
+    border:1px solid var(--border-strong);
+    background: var(--panel-2);
+    color:var(--cyan);
+    cursor:pointer;
+    flex-shrink:0;
+    transition: background .15s ease, border-color .15s ease, transform .1s ease;
+  }
+  .icon-btn:active{ transform: scale(0.94); }
+  .icon-btn:hover{ background:#152640; border-color: var(--cyan-soft); }
+
+  .topbar-center{
+    flex:1;
+    text-align:center;
+    min-width:0;
+  }
+  .topbar-title{
+    font-family:var(--mono);
+    font-size:13px;
+    letter-spacing:0.14em;
+    color:var(--text);
+    font-weight:600;
+    white-space:nowrap;
+    overflow:hidden;
+    text-overflow:ellipsis;
+  }
+  .topbar-sub{
+    font-family:var(--mono);
+    font-size:10.5px;
+    color:var(--text-dim);
+    letter-spacing:0.08em;
+    margin-top:2px;
+  }
+
+  .topbar-right{
+    display:flex; align-items:center; gap:8px;
+  }
+
+  .power-btn{
+    width:40px;height:40px;border-radius:8px;
+    border:1px solid var(--border-strong);
+    background: var(--panel-2);
+    color: var(--text-dim);
+    cursor:pointer;
+    display:flex; align-items:center; justify-content:center;
+    transition: all .2s ease;
+    flex-shrink:0;
+    position:relative;
+  }
+  .power-btn svg{ width:18px; height:18px; }
+  .power-btn.is-off{ color: var(--text-dim); border-color: var(--border); }
+  .power-btn.is-starting{ color: var(--amber); border-color: rgba(240,171,61,0.5); box-shadow: 0 0 14px rgba(240,171,61,0.25); }
+  .power-btn.is-ready{ color: var(--cyan); border-color: var(--cyan-soft); box-shadow: 0 0 14px var(--cyan-glow); }
+
+  .status-pill{
+    display:flex; align-items:center; gap:6px;
+    padding: 7px 10px;
+    border-radius:20px;
+    border:1px solid var(--border);
+    background: var(--panel-2);
+    font-family:var(--mono);
+    font-size:10.5px;
+    letter-spacing:0.06em;
+    color:var(--text-dim);
+    white-space:nowrap;
+  }
+  .status-dot{
+    width:7px;height:7px;border-radius:50%;
+    background: var(--text-faint);
+    flex-shrink:0;
+  }
+  .status-dot.starting{ background: var(--amber); box-shadow:0 0 8px var(--amber); animation: pulse 1s infinite ease-in-out; }
+  .status-dot.ready{ background: var(--green); box-shadow:0 0 8px var(--green); }
+  @keyframes pulse{ 0%,100%{ opacity:1;} 50%{ opacity:0.35; } }
+
+  /* ---------- main stage ---------- */
+  .stage-wrap{
+    position:relative;
+    z-index:1;
+    flex:1;
+    max-width:640px;
+    width:100%;
+    margin:0 auto;
+    padding: 18px 14px 60px;
+  }
+
+  .boot-log{
+    max-width:640px;
+    margin:0 auto;
+    padding: 0 14px;
+    overflow:hidden;
+    max-height:0;
+    transition: max-height .35s ease, padding .35s ease;
+  }
+  .boot-log.open{ max-height:210px; padding: 10px 14px; }
+  .boot-log-inner{
+    background: rgba(8,16,28,0.9);
+    border:1px solid var(--border);
+    border-radius: var(--radius);
+    padding:12px 14px;
+    font-family:var(--mono);
+    font-size:11.5px;
+    color:var(--text-dim);
+    line-height:1.9;
+  }
+  .boot-log-inner .line{ display:flex; justify-content:space-between; gap:10px; }
+  .boot-log-inner .line .tag{ color:var(--text-faint); }
+  .boot-log-inner .line.done .tag{ color: var(--cyan); }
+  .boot-log-inner .line .val{ color:var(--text-dim); }
+  .boot-log-inner .line.done .val{ color: var(--green); }
+
+  /* ---------- hardware rows ---------- */
+  .hw-row{
+    display:flex;
+    align-items:flex-start;
+    gap:0;
+    margin-bottom: 2px;
+  }
+  .hw-label-col{
+    width: 116px;
+    flex-shrink:0;
+    padding-top: 14px;
+    text-align:right;
+    padding-right:8px;
+  }
+  .hw-label{
+    font-family:var(--mono);
+    font-size:10px;
+    letter-spacing:0.05em;
+    color:var(--text-dim);
+    display:inline-flex;
+    align-items:center;
+    gap:5px;
+    justify-content:flex-end;
+    line-height:1.4;
+  }
+  .hw-label .dot{
+    width:4px;height:4px;border-radius:50%;
+    background: var(--text-faint);
+    flex-shrink:0;
+  }
+  .hw-connector{
+    width:20px;
+    flex-shrink:0;
+    padding-top: 20px;
+  }
+  .hw-connector::before{
+    content:'';
+    display:block;
+    height:1px;
+    background: var(--border-strong);
+  }
+  .hw-card{
+    flex:1;
+    min-width:0;
+    background: linear-gradient(180deg, var(--panel-2), var(--panel));
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    margin-bottom: 14px;
+    padding: 12px 14px;
+    position:relative;
+    transition: border-color .3s ease, box-shadow .3s ease, opacity .3s ease;
+    opacity: 0.5;
+  }
+  .hw-card.state-starting{ opacity:0.85; border-color: rgba(240,171,61,0.4); box-shadow: 0 0 18px rgba(240,171,61,0.08) inset; }
+  .hw-card.state-ready{ opacity:1; border-color: var(--border-strong); box-shadow: 0 0 22px var(--cyan-glow) inset, 0 0 1px var(--cyan-soft); }
+  .hw-card.state-static{ opacity:1; border-color: var(--border-strong); } /* magnet field always established */
+
+  .hw-card-top{
+    display:flex; align-items:center; justify-content:space-between;
+    margin-bottom:8px;
+  }
+  .hw-card-title{
+    font-family:var(--mono);
+    font-size:11px;
+    letter-spacing:0.06em;
+    color:var(--text);
+    font-weight:600;
+  }
+  .hw-badge{
+    font-family:var(--mono);
+    font-size:9.5px;
+    letter-spacing:0.05em;
+    padding:3px 7px;
+    border-radius:5px;
+    background: rgba(0,0,0,0.25);
+    border:1px solid var(--border);
+    color:var(--text-dim);
+    white-space:nowrap;
+  }
+  .hw-badge.on{ color:var(--cyan); border-color: var(--cyan-soft); }
+  .hw-badge.pending{ color:var(--amber); border-color: rgba(240,171,61,0.5); }
+
+  .hw-visual{
+    display:flex; align-items:center; justify-content:center;
+    padding: 4px 0 2px;
+  }
+  .hw-visual svg{ display:block; width:100%; height:auto; }
+
+  .hw-sub-labels{
+    display:flex;
+    justify-content:space-between;
+    font-family:var(--mono);
+    font-size:8.5px;
+    letter-spacing:0.05em;
+    color: var(--text-faint);
+    margin-top:2px;
+    padding: 0 2px;
+  }
+
+  /* magnet hero card */
+  .hw-card.magnet-card{ padding: 14px 14px 10px; }
+  .magnet-readouts{
+    display:flex; gap:8px; margin-top:10px; flex-wrap:wrap;
+  }
+  .readout{
+    flex:1; min-width: 84px;
+    background: rgba(0,0,0,0.22);
+    border:1px solid var(--border);
+    border-radius:7px;
+    padding:7px 9px;
+  }
+  .readout .rlabel{ font-family:var(--mono); font-size:8.5px; color:var(--text-faint); letter-spacing:0.06em; }
+  .readout .rval{ font-family:var(--mono); font-size:13px; color:var(--cyan); margin-top:2px; font-weight:600; }
+
+  /* ---------- drawer ---------- */
+  .overlay{
+    position:fixed; inset:0;
+    background: rgba(3,7,14,0.6);
+    backdrop-filter: blur(2px);
+    z-index:40;
+    opacity:0;
+    pointer-events:none;
+    transition: opacity .25s ease;
+  }
+  .overlay.open{ opacity:1; pointer-events:auto; }
+
+  .drawer{
+    position:fixed;
+    top:0; left:0; bottom:0;
+    width: min(320px, 86vw);
+    background: linear-gradient(180deg, #0a1524, #071120);
+    border-right:1px solid var(--border-strong);
+    z-index:50;
+    transform: translateX(-100%);
+    transition: transform .28s cubic-bezier(.4,0,.2,1);
+    display:flex;
+    flex-direction:column;
+    box-shadow: 20px 0 60px rgba(0,0,0,0.5);
+  }
+  .drawer.open{ transform: translateX(0); }
+
+  .drawer-header{
+    padding: 16px 16px 14px;
+    border-bottom:1px solid var(--border);
+    font-family:var(--mono);
+    font-size:12px;
+    letter-spacing:0.16em;
+    color:var(--cyan);
+    display:flex; align-items:center; justify-content:space-between;
+    flex-shrink:0;
+  }
+  .drawer-close{
+    background:none; border:none; color:var(--text-dim); cursor:pointer;
+    width:30px;height:30px; display:flex; align-items:center; justify-content:center;
+    border-radius:6px;
+  }
+  .drawer-close:hover{ background: rgba(255,255,255,0.05); }
+
+  .drawer-body{
+    flex:1;
+    overflow-y:auto;
+    padding: 8px 0 20px;
+  }
+
+  .acc-section{ border-bottom:1px solid rgba(120,190,215,0.08); }
+  .acc-head{
+    width:100%;
+    display:flex; align-items:center; justify-content:space-between;
+    background:none; border:none;
+    padding: 12px 16px;
+    font-family:var(--mono);
+    font-size:11px;
+    letter-spacing:0.1em;
+    color: var(--text-dim);
+    cursor:pointer;
+    text-align:left;
+  }
+  .acc-head:hover{ color: var(--text); }
+  .acc-head .chev{ transition: transform .2s ease; color:var(--text-faint); font-size:10px; }
+  .acc-section.open .acc-head .chev{ transform: rotate(90deg); color:var(--cyan); }
+  .acc-section.open .acc-head{ color:var(--cyan); }
+
+  .acc-body{
+    max-height:0;
+    overflow:hidden;
+    transition: max-height .25s ease;
+  }
+  .acc-section.open .acc-body{ max-height: 300px; }
+
+  .acc-item{
+    display:block;
+    width:100%;
+    text-align:left;
+    background:none;
+    border:none;
+    padding: 10px 16px 10px 30px;
+    font-family:var(--sans);
+    font-size:13px;
+    color:var(--text-dim);
+    cursor:pointer;
+    position:relative;
+  }
+  .acc-item::before{
+    content:'';
+    position:absolute; left:16px; top:50%;
+    width:5px; height:5px; border-radius:50%;
+    background: var(--text-faint);
+    transform: translateY(-50%);
+  }
+  .acc-item:hover{ color:var(--text); background: rgba(91,227,240,0.05); }
+  .acc-item:hover::before{ background: var(--cyan); }
+
+  /* ---------- control sheet ---------- */
+  .sheet-overlay{
+    position:fixed; inset:0;
+    background: rgba(3,7,14,0.55);
+    z-index:60;
+    opacity:0; pointer-events:none;
+    transition: opacity .25s ease;
+  }
+  .sheet-overlay.open{ opacity:1; pointer-events:auto; }
+
+  .control-sheet{
+    position:fixed;
+    left:0; right:0; bottom:0;
+    max-width:640px;
+    margin:0 auto;
+    background: linear-gradient(180deg, #0d1c30, #08131f);
+    border:1px solid var(--border-strong);
+    border-bottom:none;
+    border-radius: 16px 16px 0 0;
+    z-index:70;
+    transform: translateY(105%);
+    transition: transform .3s cubic-bezier(.4,0,.2,1);
+    box-shadow: 0 -20px 60px rgba(0,0,0,0.5);
+    max-height: 78vh;
+    display:flex;
+    flex-direction:column;
+  }
+  .control-sheet.open{ transform: translateY(0); }
+  .sheet-handle{
+    width:36px; height:4px; border-radius:2px;
+    background: var(--border-strong);
+    margin: 10px auto 4px;
+    flex-shrink:0;
+  }
+  .sheet-content{
+    padding: 6px 20px 26px;
+    overflow-y:auto;
+  }
+  .sheet-title{
+    font-family:var(--mono);
+    font-size:13px;
+    letter-spacing:0.1em;
+    color:var(--cyan);
+    margin: 6px 0 16px;
+  }
+  .field-row{
+    display:flex; justify-content:space-between; align-items:center;
+    padding: 11px 0;
+    border-bottom: 1px solid rgba(120,190,215,0.08);
+  }
+  .field-row:last-of-type{ border-bottom:none; }
+  .field-label{
+    font-family:var(--mono);
+    font-size:10.5px;
+    letter-spacing:0.07em;
+    color:var(--text-dim);
+  }
+  .field-value{
+    font-family:var(--mono);
+    font-size:14px;
+    color:var(--text);
+    font-weight:600;
+  }
+  .field-value.accent{ color:var(--cyan); }
+  .field-value.warn{ color:var(--amber); }
+  .field-value.ok{ color:var(--green); }
+
+  .sheet-actions{
+    display:flex; gap:10px; margin-top:16px; flex-wrap:wrap;
+  }
+  .btn{
+    flex:1;
+    min-width:110px;
+    font-family:var(--mono);
+    font-size:11px;
+    letter-spacing:0.08em;
+    padding: 12px 14px;
+    border-radius:8px;
+    border:1px solid var(--border-strong);
+    background: var(--panel-2);
+    color:var(--text);
+    cursor:pointer;
+    transition: all .15s ease;
+    text-align:center;
+  }
+  .btn:hover{ border-color:var(--cyan-soft); color:var(--cyan); }
+  .btn:active{ transform: scale(0.97); }
+  .btn.primary{ background: rgba(91,227,240,0.1); border-color: var(--cyan-soft); color:var(--cyan); }
+  .btn.danger{ border-color: rgba(242,88,107,0.4); color:var(--red); }
+  .btn:disabled{ opacity:0.35; cursor:not-allowed; }
+
+  .sheet-note{
+    margin-top: 14px;
+    font-family:var(--mono);
+    font-size:10.5px;
+    color:var(--text-faint);
+    line-height:1.6;
+    border-left:2px solid var(--border-strong);
+    padding-left:10px;
+  }
+
+  /* ---------- toast ---------- */
+  .toast{
+    position:fixed;
+    left:50%; bottom:26px;
+    transform: translateX(-50%) translateY(20px);
+    background: #0d1c30;
+    border:1px solid var(--cyan-soft);
+    color:var(--text);
+    font-family:var(--mono);
+    font-size:11.5px;
+    padding: 12px 18px;
+    border-radius:8px;
+    z-index:80;
+    opacity:0;
+    pointer-events:none;
+    transition: all .25s ease;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+    max-width: 86vw;
+    text-align:center;
+  }
+  .toast.show{ opacity:1; transform: translateX(-50%) translateY(0); }
+
+  /* ---------- stage 2: sample access / spinner / air ---------- */
+  .sample-readouts{
+    display:flex; gap:8px; margin-top:10px; flex-wrap:wrap;
+  }
+  .sample-readouts .readout{ flex:1; min-width: 118px; }
+
+  .phase-line{
+    font-family:var(--mono);
+    font-size:9.5px;
+    letter-spacing:0.06em;
+    color: var(--text-faint);
+    margin-top:8px;
+    min-height:12px;
+    transition: color .2s ease;
+  }
+  .phase-line.active{ color: var(--amber); }
+
+  .airflow-row{
+    display:flex; align-items:center; gap:8px;
+    margin-top:10px;
+    padding:6px 9px;
+    background: rgba(0,0,0,0.2);
+    border:1px solid var(--border);
+    border-radius:7px;
+  }
+  .airflow-label{
+    font-family:var(--mono); font-size:9px; letter-spacing:0.06em;
+    color:var(--text-faint); white-space:nowrap;
+  }
+  .airflow-dot{
+    width:6px; height:6px; border-radius:50%;
+    background:var(--text-faint); flex-shrink:0;
+  }
+  .airflow-dot.on{ background:var(--cyan); box-shadow:0 0 7px var(--cyan-soft); }
+  .airflow-wave{ flex:1; height:14px; }
+  .airflow-wave path{ stroke-dasharray: 6 5; }
+  .airflow-wave.on path{ animation: airflow-scroll 0.9s linear infinite; stroke: var(--cyan); stroke-opacity:0.75; }
+  .airflow-wave:not(.on) path{ stroke: currentColor; stroke-opacity:0.2; }
+  @keyframes airflow-scroll{ to{ stroke-dashoffset: -22; } }
+  .airflow-state{
+    font-family:var(--mono); font-size:9.5px; letter-spacing:0.05em;
+    color:var(--text-dim); white-space:nowrap;
+  }
+  .airflow-state.on{ color:var(--cyan); }
+
+  .sample-btn-row{ margin-top:12px; }
+  .sample-btn{
+    width:100%;
+    font-family:var(--mono);
+    font-size:11.5px;
+    letter-spacing:0.08em;
+    padding: 13px 14px;
+    border-radius:8px;
+    border:1px solid var(--border-strong);
+    background: rgba(91,227,240,0.1);
+    color:var(--cyan);
+    cursor:pointer;
+    transition: all .15s ease;
+    text-align:center;
+  }
+  .sample-btn:hover{ border-color:var(--cyan); background:rgba(91,227,240,0.16); }
+  .sample-btn:active{ transform: scale(0.98); }
+  .sample-btn:disabled{ opacity:0.4; cursor:not-allowed; color:var(--text-dim); background:var(--panel-2); }
+  .sample-btn.eject{ color:var(--amber); border-color: rgba(240,171,61,0.45); background: rgba(240,171,61,0.08); }
+  .sample-btn.eject:hover{ border-color:var(--amber); background:rgba(240,171,61,0.14); }
+
+  #sampleCapsule{ transition: transform 1.15s cubic-bezier(.4,0,.2,1); }
+  #capsuleSpin{ transform-origin: center; transform-box: fill-box; }
+  #capsuleSpin.spinning{ animation-name: capsule-spin; animation-timing-function: linear; animation-iteration-count: infinite; }
+  @keyframes capsule-spin{ from{ transform: rotate(0deg); } to{ transform: rotate(360deg); } }
+
+  .spinner-readouts{ display:flex; gap:8px; flex-wrap:wrap; margin: 4px 0 6px; }
+  .spinner-readouts .readout{ flex:1; min-width:90px; }
+
+  @media (min-width: 760px){
+    .stage-wrap{ padding-top:28px; }
+    .hw-label-col{ width:150px; }
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="grid-bg"></div>
+
+  <header class="topbar">
+    <button class="icon-btn" id="hamburgerBtn" aria-label="Open menu">
+      <svg viewBox="0 0 24 24" fill="none" width="18" height="18"><path d="M3 6h18M3 12h18M3 18h18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+    </button>
+    <div class="topbar-center">
+      <div class="topbar-title">NMR SPECTROMETER</div>
+      <div class="topbar-sub" id="topbarSub">500 MHz &nbsp;·&nbsp; 1H &nbsp;·&nbsp; SYSTEM: OFF</div>
+    </div>
+    <div class="topbar-right">
+      <div class="status-pill">
+        <span class="status-dot" id="statusDot"></span>
+        <span id="statusPillText">OFF</span>
+      </div>
+      <button class="power-btn is-off" id="powerBtn" aria-label="Power">
+        <svg viewBox="0 0 24 24" fill="none"><path d="M12 2v9" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M6.5 6.5a8 8 0 1 0 11 0" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <div class="boot-log" id="bootLog">
+    <div class="boot-log-inner" id="bootLogInner"></div>
+  </div>
+
+  <main class="stage-wrap">
+
+    <!-- SAMPLE ACCESS -->
+    <div class="hw-row">
+      <div class="hw-label-col"><span class="hw-label"><span class="dot"></span>SAMPLE ACCESS</span></div>
+      <div class="hw-connector"></div>
+      <div class="hw-card" id="card-sample">
+        <div class="hw-card-top">
+          <span class="hw-card-title">SAMPLE CHANGER</span>
+          <span class="hw-badge" id="badge-sample">NOT LOADED</span>
+        </div>
+        <div class="hw-visual">
+          <svg viewBox="0 0 300 46" width="300" height="46">
+            <rect x="10" y="10" width="280" height="26" rx="6" fill="none" stroke="currentColor" stroke-opacity="0.35"/>
+            <circle id="sampleDot" cx="150" cy="23" r="7" fill="none" stroke="currentColor" stroke-width="2"/>
+            <line x1="20" y1="23" x2="280" y2="23" stroke="currentColor" stroke-opacity="0.15" stroke-dasharray="3 4"/>
+          </svg>
+        </div>
+
+        <div class="sample-readouts">
+          <div class="readout"><div class="rlabel">STATUS</div><div class="rval" id="sampleStatusVal">NOT LOADED</div></div>
+          <div class="readout"><div class="rlabel">POSITION</div><div class="rval" id="samplePositionVal">HOME</div></div>
+        </div>
+        <div class="spinner-readouts">
+          <div class="readout"><div class="rlabel">SPINNER</div><div class="rval" id="spinnerReadoutVal">STOPPED · 0 Hz</div></div>
+          <div class="readout"><div class="rlabel">AIR</div><div class="rval" id="airReadoutVal">OFF</div></div>
+        </div>
+
+        <div class="airflow-row">
+          <span class="airflow-label">AIR FLOW</span>
+          <span class="airflow-dot" id="airflowDot"></span>
+          <svg class="airflow-wave" id="airflowWave" viewBox="0 0 120 14" preserveAspectRatio="none">
+            <path d="M0 7 L10 7 L14 2 L20 12 L26 2 L32 12 L38 2 L44 12 L50 7 L120 7" fill="none" stroke-width="1.6"/>
+          </svg>
+          <span class="airflow-state" id="airflowStateText">OFF</span>
+        </div>
+
+        <div class="phase-line" id="samplePhaseLine">&nbsp;</div>
+
+        <div class="sample-btn-row">
+          <button class="sample-btn" id="sampleActionBtn">LOAD SAMPLE</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- SUPERCONDUCTING MAGNET (hero) -->
+    <div class="hw-row">
+      <div class="hw-label-col"><span class="hw-label"><span class="dot"></span>SUPERCONDUCTING MAGNET</span></div>
+      <div class="hw-connector"></div>
+      <div class="hw-card magnet-card state-static" id="card-magnet">
+        <div class="hw-card-top">
+          <span class="hw-card-title">MAGNET / BORE / PROBE</span>
+          <span class="hw-badge on" id="badge-magnet">READY</span>
+        </div>
+        <div class="hw-visual">
+          <svg viewBox="0 0 300 260" width="300" height="260">
+            <!-- cryostat outer shell -->
+            <rect x="55" y="8" width="190" height="220" rx="26" fill="#0a1a2c" stroke="var(--cyan)" stroke-opacity="0.4"/>
+            <!-- dewar bands -->
+            <line x1="55" y1="55" x2="245" y2="55" stroke="currentColor" stroke-opacity="0.18"/>
+            <line x1="55" y1="95" x2="245" y2="95" stroke="currentColor" stroke-opacity="0.18"/>
+            <line x1="55" y1="185" x2="245" y2="185" stroke="currentColor" stroke-opacity="0.18"/>
+            <!-- central bore -->
+            <rect x="132" y="8" width="36" height="220" fill="#020609" stroke="var(--cyan)" stroke-opacity="0.55"/>
+            <!-- shim coil hint rings inside bore -->
+            <ellipse cx="150" cy="70" rx="17" ry="5" fill="none" stroke="currentColor" stroke-opacity="0.25"/>
+            <ellipse cx="150" cy="150" rx="17" ry="5" fill="none" stroke="currentColor" stroke-opacity="0.25"/>
+            <!-- sample capsule, position animated by JS via CSS transform -->
+            <g id="sampleCapsule" transform="translate(150,26)">
+              <g id="capsuleSpin">
+                <rect x="-6" y="-14" width="12" height="30" rx="5" fill="var(--cyan)" fill-opacity="0.55" stroke="var(--cyan)"/>
+                <line x1="0" y1="-13" x2="0" y2="-7" stroke="#eafcff" stroke-opacity="0.9" stroke-width="1.5"/>
+              </g>
+            </g>
+            <!-- probe coil at bottom of bore -->
+            <g transform="translate(150,205)">
+              <ellipse cx="0" cy="0" rx="14" ry="6" fill="none" stroke="var(--amber)" stroke-opacity="0.7" stroke-width="1.6"/>
+              <ellipse cx="0" cy="8" rx="14" ry="6" fill="none" stroke="var(--amber)" stroke-opacity="0.4" stroke-width="1.6"/>
+            </g>
+            <!-- external label tags -->
+            <text x="150" y="245" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="9" fill="currentColor" fill-opacity="0.5" letter-spacing="1">PROBE</text>
+            <text x="150" y="18" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="8" fill="currentColor" fill-opacity="0" >.</text>
+            <text x="30" y="120" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="8.5" fill="currentColor" fill-opacity="0.4" letter-spacing="0.5" transform="rotate(-90 30 120)">SAMPLE BORE</text>
+            <text x="270" y="120" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="8.5" fill="currentColor" fill-opacity="0.4" letter-spacing="0.5" transform="rotate(90 270 120)">MAGNET HOUSING</text>
+          </svg>
+        </div>
+        <div class="magnet-readouts">
+          <div class="readout"><div class="rlabel">FIELD</div><div class="rval">11.7 T</div></div>
+          <div class="readout"><div class="rlabel">FREQUENCY</div><div class="rval">500 MHz</div></div>
+          <div class="readout"><div class="rlabel">STATUS</div><div class="rval" id="magnetStatusVal">READY</div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- GRADIENT SYSTEM -->
+    <div class="hw-row">
+      <div class="hw-label-col"><span class="hw-label"><span class="dot"></span>GRADIENT SYSTEM</span></div>
+      <div class="hw-connector"></div>
+      <div class="hw-card" id="card-gradient">
+        <div class="hw-card-top">
+          <span class="hw-card-title">GRADIENT DRIVER</span>
+          <span class="hw-badge" id="badge-gradient">OFF</span>
+        </div>
+        <div class="hw-visual">
+          <svg viewBox="0 0 300 40" width="300" height="40">
+            <path d="M10 20 L60 20 L80 8 L100 32 L120 8 L140 32 L160 8 L180 32 L200 20 L290 20" fill="none" stroke="currentColor" stroke-opacity="0.5" stroke-width="1.6"/>
+          </svg>
+        </div>
+      </div>
+    </div>
+
+    <!-- SHIM SYSTEM -->
+    <div class="hw-row">
+      <div class="hw-label-col"><span class="hw-label"><span class="dot"></span>SHIM SYSTEM</span></div>
+      <div class="hw-connector"></div>
+      <div class="hw-card" id="card-shim">
+        <div class="hw-card-top">
+          <span class="hw-card-title">SHIM COILS</span>
+          <span class="hw-badge" id="badge-shim">STANDBY</span>
+        </div>
+        <div class="hw-visual">
+          <svg viewBox="0 0 300 40" width="300" height="40">
+            <circle cx="60" cy="20" r="10" fill="none" stroke="currentColor" stroke-opacity="0.45"/>
+            <circle cx="150" cy="20" r="10" fill="none" stroke="currentColor" stroke-opacity="0.45"/>
+            <circle cx="240" cy="20" r="10" fill="none" stroke="currentColor" stroke-opacity="0.45"/>
+            <line x1="70" y1="20" x2="140" y2="20" stroke="currentColor" stroke-opacity="0.2"/>
+            <line x1="160" y1="20" x2="230" y2="20" stroke="currentColor" stroke-opacity="0.2"/>
+          </svg>
+        </div>
+      </div>
+    </div>
+
+    <!-- RF CONSOLE -->
+    <div class="hw-row">
+      <div class="hw-label-col"><span class="hw-label"><span class="dot"></span>RF ELECTRONICS</span></div>
+      <div class="hw-connector"></div>
+      <div class="hw-card" id="card-rf">
+        <div class="hw-card-top">
+          <span class="hw-card-title">RF CONSOLE</span>
+          <span class="hw-badge" id="badge-rf">OFF</span>
+        </div>
+        <div class="hw-visual">
+          <svg viewBox="0 0 300 40" width="300" height="40">
+            <path d="M20 20 a8 8 0 0 1 16 0 a12 12 0 0 1 24 0 a16 16 0 0 1 32 0" fill="none" stroke="currentColor" stroke-opacity="0.5" stroke-width="1.6"/>
+            <rect x="230" y="10" width="60" height="20" rx="3" fill="none" stroke="currentColor" stroke-opacity="0.4"/>
+            <line x1="240" y1="16" x2="280" y2="16" stroke="currentColor" stroke-opacity="0.3"/>
+            <line x1="240" y1="22" x2="270" y2="22" stroke="currentColor" stroke-opacity="0.3"/>
+          </svg>
+        </div>
+      </div>
+    </div>
+
+    <!-- NMR CONSOLE -->
+    <div class="hw-row">
+      <div class="hw-label-col"><span class="hw-label"><span class="dot"></span>ELECTRONICS BAY</span></div>
+      <div class="hw-connector"></div>
+      <div class="hw-card" id="card-console">
+        <div class="hw-card-top">
+          <span class="hw-card-title">NMR CONSOLE</span>
+          <span class="hw-badge" id="badge-console">OFF</span>
+        </div>
+        <div class="hw-visual">
+          <svg viewBox="0 0 300 40" width="300" height="40">
+            <rect x="20" y="8" width="70" height="24" rx="3" fill="none" stroke="currentColor" stroke-opacity="0.4"/>
+            <rect x="100" y="8" width="70" height="24" rx="3" fill="none" stroke="currentColor" stroke-opacity="0.4"/>
+            <rect x="180" y="8" width="100" height="24" rx="3" fill="none" stroke="currentColor" stroke-opacity="0.4"/>
+            <circle cx="35" cy="20" r="3" fill="currentColor" fill-opacity="0.5"/>
+            <circle cx="115" cy="20" r="3" fill="currentColor" fill-opacity="0.5"/>
+            <circle cx="195" cy="20" r="3" fill="currentColor" fill-opacity="0.5"/>
+          </svg>
+        </div>
+      </div>
+    </div>
+
+    <!-- DATA SYSTEM -->
+    <div class="hw-row">
+      <div class="hw-label-col"><span class="hw-label"><span class="dot"></span>DATA SYSTEM</span></div>
+      <div class="hw-connector"></div>
+      <div class="hw-card" id="card-data">
+        <div class="hw-card-top">
+          <span class="hw-card-title">ACQUISITION COMPUTER</span>
+          <span class="hw-badge" id="badge-data">OFF</span>
+        </div>
+        <div class="hw-visual">
+          <svg viewBox="0 0 300 60" width="300" height="60">
+            <rect x="100" y="8" width="100" height="34" rx="4" fill="none" stroke="currentColor" stroke-opacity="0.45"/>
+            <path d="M112 32 L124 32 L130 18 L138 40 L146 24 L152 32 L188 32" fill="none" stroke="currentColor" stroke-opacity="0.6" stroke-width="1.4"/>
+            <line x1="140" y1="42" x2="140" y2="50" stroke="currentColor" stroke-opacity="0.4"/>
+            <line x1="118" y1="50" x2="162" y2="50" stroke="currentColor" stroke-opacity="0.4"/>
+          </svg>
+        </div>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- drawer -->
+  <div class="overlay" id="overlay"></div>
+  <nav class="drawer" id="drawer" aria-label="NMR control menu">
+    <div class="drawer-header">
+      NMR CONTROL
+      <button class="drawer-close" id="drawerClose" aria-label="Close menu">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </button>
+    </div>
+    <div class="drawer-body" id="drawerBody"></div>
+  </nav>
+
+  <!-- control sheet -->
+  <div class="sheet-overlay" id="sheetOverlay"></div>
+  <div class="control-sheet" id="controlSheet" role="dialog" aria-modal="true">
+    <div class="sheet-handle"></div>
+    <div class="sheet-content" id="sheetContent"></div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  /* ---------------- centralized state ---------------- */
+  const state = {
+    power: 'OFF', // OFF | STARTING | READY
+    subsystems: {
+      console: 'OFF',
+      rf: 'OFF',
+      gradient: 'OFF',
+      probe: 'OFF',
+      magnet: 'READY' // static field always established
+    },
+    sample: { position: 'HOME', status: 'EMPTY', phase: '' },
+    // status: EMPTY | LOADING | LOADED | EJECTING
+    // position: HOME | APPROACHING | INSERTING | POSITIONED | EJECTING | EJECTED
+    spinner: { status: 'STOPPED', rate: 0, targetRate: 20, direction: 'CW' },
+    // status: STOPPED | ACCELERATING | SPINNING | DECELERATING
+    airSystem: { supportAir: false, driveAir: false, pressureState: 'OFF' },
+    // pressureState: OFF | SUPPORT | DRIVE | EJECT
+    lock: { status: 'STANDBY', level: 0, phase: 0 },
+    shim: { status: 'STANDBY', homogeneity: '--' },
+    rf: { status: 'STANDBY', frequency: 500, transmitter: 'OFF', receiver: 'STANDBY' },
+    acquisition: { status: 'IDLE', scans: 8, time: 1.0 }
+  };
+
+  // busy flags guard against overlapping sample/spinner sequences
+  let sampleBusy = false;
+  let spinnerBusy = false;
+  function sleep(ms){ return new Promise(resolve => setTimeout(resolve, ms)); }
+
+  function sampleStatusText(){
+    switch(state.sample.status){
+      case 'EMPTY': return 'NOT LOADED';
+      case 'LOADING': return 'LOADING';
+      case 'LOADED': return 'LOADED';
+      case 'EJECTING': return 'EJECTING';
+      default: return state.sample.status;
+    }
+  }
+  function sampleButtonLabel(){
+    switch(state.sample.status){
+      case 'EMPTY': return 'LOAD SAMPLE';
+      case 'LOADING': return 'LOADING SAMPLE...';
+      case 'LOADED': return 'EJECT SAMPLE';
+      case 'EJECTING': return 'EJECTING...';
+      default: return 'LOAD SAMPLE';
+    }
+  }
+  function airStateText(){
+    switch(state.airSystem.pressureState){
+      case 'OFF': return 'OFF';
+      case 'SUPPORT': return 'SUPPORT ON';
+      case 'DRIVE': return 'SUPPORT ON · DRIVE ACTIVE';
+      case 'EJECT': return 'EJECTION ACTIVE';
+      default: return 'OFF';
+    }
+  }
+  function spinnerReadoutText(){
+    return state.spinner.status + ' · ' + state.spinner.rate + ' Hz';
+  }
+  // amount of Hz per ramp step, derived from the configured target/current rate
+  // so the demonstration sequence (0→5→10→15→20) stays generic and configurable
+  function rampUpSteps(target){
+    const inc = target / 4;
+    return [inc, inc*2, inc*3, target].map(v => Math.round(v));
+  }
+  function rampDownSteps(from){
+    const inc = from / 4;
+    return [from-inc, from-2*inc, from-3*inc, 0].map(v => Math.max(0, Math.round(v)));
+  }
+
+  const els = {
+    powerBtn: document.getElementById('powerBtn'),
+    statusDot: document.getElementById('statusDot'),
+    statusPillText: document.getElementById('statusPillText'),
+    topbarSub: document.getElementById('topbarSub'),
+    bootLog: document.getElementById('bootLog'),
+    bootLogInner: document.getElementById('bootLogInner'),
+    hamburgerBtn: document.getElementById('hamburgerBtn'),
+    drawer: document.getElementById('drawer'),
+    drawerClose: document.getElementById('drawerClose'),
+    overlay: document.getElementById('overlay'),
+    drawerBody: document.getElementById('drawerBody'),
+    sheetOverlay: document.getElementById('sheetOverlay'),
+    controlSheet: document.getElementById('controlSheet'),
+    sheetContent: document.getElementById('sheetContent'),
+    toast: document.getElementById('toast'),
+    sampleDot: document.getElementById('sampleDot'),
+    sampleCapsule: document.getElementById('sampleCapsule'),
+    badgeSample: document.getElementById('badge-sample'),
+    badgeGradient: document.getElementById('badge-gradient'),
+    badgeShim: document.getElementById('badge-shim'),
+    badgeRf: document.getElementById('badge-rf'),
+    badgeConsole: document.getElementById('badge-console'),
+    badgeData: document.getElementById('badge-data'),
+    badgeMagnet: document.getElementById('badge-magnet'),
+    magnetStatusVal: document.getElementById('magnetStatusVal'),
+    cardGradient: document.getElementById('card-gradient'),
+    cardShim: document.getElementById('card-shim'),
+    cardRf: document.getElementById('card-rf'),
+    cardConsole: document.getElementById('card-console'),
+    cardData: document.getElementById('card-data'),
+    cardSample: document.getElementById('card-sample'),
+    capsuleSpin: document.getElementById('capsuleSpin'),
+    sampleStatusVal: document.getElementById('sampleStatusVal'),
+    samplePositionVal: document.getElementById('samplePositionVal'),
+    spinnerReadoutVal: document.getElementById('spinnerReadoutVal'),
+    airReadoutVal: document.getElementById('airReadoutVal'),
+    airflowDot: document.getElementById('airflowDot'),
+    airflowWave: document.getElementById('airflowWave'),
+    airflowStateText: document.getElementById('airflowStateText'),
+    samplePhaseLine: document.getElementById('samplePhaseLine'),
+    sampleActionBtn: document.getElementById('sampleActionBtn')
+  };
+
+  let toastTimer = null;
+  function showToast(msg){
+    els.toast.textContent = msg;
+    els.toast.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(()=> els.toast.classList.remove('show'), 2600);
+  }
+
+  /* ---------------- render ---------------- */
+  function setCardState(cardEl, badgeEl, status){
+    cardEl.classList.remove('state-starting','state-ready');
+    badgeEl.classList.remove('on','pending');
+    if(status === 'READY'){
+      cardEl.classList.add('state-ready');
+      badgeEl.classList.add('on');
+      badgeEl.textContent = 'READY';
+    } else if(status === 'INITIALIZING'){
+      cardEl.classList.add('state-starting');
+      badgeEl.classList.add('pending');
+      badgeEl.textContent = 'INITIALIZING';
+    } else {
+      badgeEl.textContent = 'OFF';
+    }
+  }
+
+  function render(){
+    // power button + status pill
+    els.powerBtn.classList.remove('is-off','is-starting','is-ready');
+    els.statusDot.classList.remove('starting','ready');
+
+    if(state.power === 'OFF'){
+      els.powerBtn.classList.add('is-off');
+      els.statusPillText.textContent = 'OFF';
+      els.topbarSub.innerHTML = '500 MHz &nbsp;·&nbsp; 1H &nbsp;·&nbsp; SYSTEM: OFF';
+    } else if(state.power === 'STARTING'){
+      els.powerBtn.classList.add('is-starting');
+      els.statusDot.classList.add('starting');
+      els.statusPillText.textContent = 'STARTING';
+      els.topbarSub.innerHTML = '500 MHz &nbsp;·&nbsp; 1H &nbsp;·&nbsp; SYSTEM: STARTING';
+    } else {
+      els.powerBtn.classList.add('is-ready');
+      els.statusDot.classList.add('ready');
+      els.statusPillText.textContent = 'READY';
+      els.topbarSub.innerHTML = '500 MHz &nbsp;·&nbsp; 1H &nbsp;·&nbsp; SYSTEM: READY';
+    }
+
+    setCardState(els.cardConsole, els.badgeConsole, state.subsystems.console);
+    setCardState(els.cardRf, els.badgeRf, state.subsystems.rf);
+    setCardState(els.cardGradient, els.badgeGradient, state.subsystems.gradient);
+
+    // shim card tracks gradient hardware readiness visually, status stays STANDBY unless power off
+    els.cardShim.classList.remove('state-starting','state-ready');
+    if(state.power === 'READY'){ els.cardShim.classList.add('state-ready'); }
+    else if(state.power === 'STARTING'){ els.cardShim.classList.add('state-starting'); }
+    els.badgeShim.textContent = state.shim.status;
+    els.badgeShim.classList.toggle('on', state.power === 'READY');
+
+    // sample access card
+    els.cardSample.classList.remove('state-starting','state-ready');
+    if(state.power === 'READY'){ els.cardSample.classList.add('state-ready'); }
+    else if(state.power === 'STARTING'){ els.cardSample.classList.add('state-starting'); }
+    els.badgeSample.textContent = sampleStatusText();
+    els.badgeSample.classList.toggle('on', state.sample.status === 'LOADED');
+    els.badgeSample.classList.toggle('pending', state.sample.status === 'LOADING' || state.sample.status === 'EJECTING');
+
+    // data system tracks console
+    setCardState(els.cardData, els.badgeData, state.subsystems.console);
+
+    // magnet always static-ready visually; status label reflects check state
+    els.badgeMagnet.textContent = state.subsystems.magnet;
+    els.magnetStatusVal.textContent = state.subsystems.magnet;
+
+    // sample capsule position (smooth CSS transform transition)
+    const capsuleY = {
+      HOME: 26, APPROACHING: 60, INSERTING: 105,
+      POSITIONED: 150, EJECTING: 90, EJECTED: 26
+    }[state.sample.position] ?? 26;
+    els.sampleCapsule.style.transform = `translate(150px, ${capsuleY}px)`;
+    if(state.sample.status === 'LOADED' || state.sample.status === 'EJECTING' || state.sample.status === 'LOADING'){
+      els.sampleDot.setAttribute('fill','var(--cyan)');
+      els.sampleDot.setAttribute('fill-opacity', state.sample.status === 'LOADED' ? '0.6' : '0.3');
+    } else {
+      els.sampleDot.setAttribute('fill','none');
+    }
+
+    // sample readouts
+    els.sampleStatusVal.textContent = sampleStatusText();
+    els.samplePositionVal.textContent = state.sample.position;
+    els.spinnerReadoutVal.textContent = spinnerReadoutText();
+    els.airReadoutVal.textContent = airStateText();
+
+    // air flow indicator
+    const airOn = state.airSystem.pressureState !== 'OFF';
+    els.airflowDot.classList.toggle('on', airOn);
+    els.airflowWave.classList.toggle('on', airOn);
+    els.airflowStateText.textContent = 'AIR FLOW: ' + state.airSystem.pressureState;
+    els.airflowStateText.classList.toggle('on', airOn);
+
+    // phase line (transient status messages during sequences)
+    els.samplePhaseLine.textContent = state.sample.phase || '\u00A0';
+    els.samplePhaseLine.classList.toggle('active', !!state.sample.phase && (sampleBusy || spinnerBusy));
+
+    // dynamic sample action button
+    els.sampleActionBtn.textContent = sampleButtonLabel();
+    els.sampleActionBtn.classList.toggle('eject', state.sample.status === 'LOADED');
+    els.sampleActionBtn.disabled = sampleBusy || state.sample.status === 'LOADING' || state.sample.status === 'EJECTING';
+
+    // sample capsule rotation reflects spinner state
+    const spinning = state.spinner.status === 'SPINNING' || state.spinner.status === 'ACCELERATING' || state.spinner.status === 'DECELERATING';
+    if(spinning && state.spinner.rate > 0){
+      const duration = Math.max(0.18, 1.7 - (state.spinner.rate / state.spinner.targetRate) * 1.45);
+      els.capsuleSpin.style.animationDuration = duration + 's';
+      els.capsuleSpin.classList.add('spinning');
+    } else {
+      els.capsuleSpin.classList.remove('spinning');
+    }
+
+    // if a control sheet is open, refresh its content live
+    if(els.controlSheet.classList.contains('open') && currentSheetId){
+      renderSheet(currentSheetId);
+    }
+  }
+
+  /* ---------------- sample access sequence ---------------- */
+  async function loadSampleSequence(){
+    if(sampleBusy || state.sample.status !== 'EMPTY') return;
+    sampleBusy = true;
+
+    state.sample.status = 'LOADING';
+    state.sample.position = 'APPROACHING';
+    state.sample.phase = 'SAMPLE DETECTED';
+    render();
+    await sleep(500);
+
+    state.sample.position = 'INSERTING';
+    state.sample.phase = 'SAMPLE ENTERING';
+    render();
+    await sleep(650);
+
+    state.sample.phase = 'SAMPLE POSITIONING';
+    render();
+    await sleep(550);
+
+    state.sample.position = 'POSITIONED';
+    state.sample.status = 'LOADED';
+    state.sample.phase = 'SAMPLE IN POSITION';
+    state.airSystem.supportAir = true;
+    state.airSystem.pressureState = 'SUPPORT';
+    render();
+    await sleep(900);
+    state.sample.phase = '';
+    render();
+
+    sampleBusy = false;
+  }
+
+  async function ejectSampleSequence(){
+    if(sampleBusy) return;
+    if(state.sample.status === 'EMPTY'){ showToast('Sample is already ejected.'); return; }
+    if(state.sample.status !== 'LOADED'){ showToast('Sample is not ready to eject.'); return; }
+    sampleBusy = true;
+
+    // safety interlock: spinner must be stopped before ejection begins
+    if(state.spinner.status === 'SPINNING' || state.spinner.status === 'ACCELERATING'){
+      showToast('Spinner is stopping before sample ejection.');
+      state.sample.phase = 'STOPPING SPINNER...';
+      spinnerBusy = true;
+      render();
+      await rampDownSpinner();
+      spinnerBusy = false;
+      state.sample.phase = 'SPINNER STOPPED';
+      render();
+      await sleep(350);
+    }
+
+    state.sample.status = 'EJECTING';
+    state.sample.position = 'EJECTING';
+    state.sample.phase = 'PREPARING EJECTION...';
+    state.airSystem.pressureState = 'EJECT';
+    render();
+    await sleep(500);
+
+    state.sample.phase = 'SAMPLE RISING';
+    render();
+    await sleep(550);
+
+    state.sample.phase = 'SAMPLE EXITING';
+    render();
+    await sleep(550);
+
+    state.sample.status = 'EMPTY';
+    state.sample.position = 'EJECTED';
+    state.sample.phase = 'SAMPLE FULLY EJECTED';
+    state.airSystem.supportAir = false;
+    state.airSystem.driveAir = false;
+    state.airSystem.pressureState = 'OFF';
+    render();
+    await sleep(900);
+    state.sample.phase = '';
+    render();
+
+    sampleBusy = false;
+  }
+
+  els.sampleActionBtn.addEventListener('click', () => {
+    if(state.sample.status === 'EMPTY') loadSampleSequence();
+    else if(state.sample.status === 'LOADED') ejectSampleSequence();
+  });
+
+  /* ---------------- spinner sequence ---------------- */
+  async function startSpinnerSequence(){
+    if(spinnerBusy || state.spinner.status !== 'STOPPED') return;
+
+    if(state.power === 'OFF'){ showToast('Cannot start spinner: power is OFF.'); return; }
+    if(state.power === 'STARTING'){ showToast('Cannot start spinner: system not ready.'); return; }
+    if(state.sample.status === 'EMPTY'){ showToast('Cannot start spinner: sample not loaded.'); return; }
+    if(state.sample.status !== 'LOADED' || state.sample.position !== 'POSITIONED'){
+      showToast('Cannot start spinner: sample not positioned.');
+      return;
+    }
+
+    spinnerBusy = true;
+    state.spinner.status = 'ACCELERATING';
+    state.airSystem.driveAir = true;
+    state.airSystem.pressureState = 'DRIVE';
+    render();
+
+    const steps = rampUpSteps(state.spinner.targetRate);
+    for(const rate of steps){
+      await sleep(420);
+      state.spinner.rate = rate;
+      render();
+    }
+
+    state.spinner.status = 'SPINNING';
+    state.spinner.rate = state.spinner.targetRate;
+    render();
+    spinnerBusy = false;
+  }
+
+  async function rampDownSpinner(){
+    // shared ramp-down used both by the STOP button and the eject interlock
+    state.spinner.status = 'DECELERATING';
+    render();
+
+    const steps = rampDownSteps(state.spinner.rate || state.spinner.targetRate);
+    for(const rate of steps){
+      await sleep(420);
+      state.spinner.rate = rate;
+      render();
+    }
+
+    state.spinner.status = 'STOPPED';
+    state.airSystem.driveAir = false;
+    state.airSystem.pressureState = (state.sample.status === 'LOADED') ? 'SUPPORT' : 'OFF';
+    render();
+  }
+
+  async function stopSpinnerSequence(){
+    if(spinnerBusy) return;
+    if(state.spinner.status !== 'SPINNING' && state.spinner.status !== 'ACCELERATING') return;
+    spinnerBusy = true;
+    await rampDownSpinner();
+    spinnerBusy = false;
+  }
+
+  /* ---------------- startup sequence ---------------- */
+  const STARTUP_STEPS = [
+    { key:'boot',     label:'SYSTEM BOOT',              dur: 650 },
+    { key:'console',  label:'NMR CONSOLE INITIALIZING',  dur: 700, sub:'console' },
+    { key:'rf',       label:'RF SYSTEM INITIALIZING',    dur: 650, sub:'rf' },
+    { key:'gradient', label:'GRADIENT SYSTEM INITIALIZING', dur: 650, sub:'gradient' },
+    { key:'probe',    label:'PROBE COMMUNICATION',       dur: 550, sub:'probe' },
+    { key:'magnet',   label:'MAGNET STATUS CHECK',       dur: 550 },
+    { key:'ready',    label:'SYSTEM READY',              dur: 300 }
+  ];
+
+  let startupRunning = false;
+
+  function buildBootLog(){
+    els.bootLogInner.innerHTML = STARTUP_STEPS.map(s =>
+      `<div class="line" id="boot-${s.key}"><span class="tag">${s.label}</span><span class="val">…</span></div>`
+    ).join('');
+  }
+
+  function runStartup(){
+    if(startupRunning) return;
+    startupRunning = true;
+    state.power = 'STARTING';
+    state.subsystems.console = 'OFF';
+    state.subsystems.rf = 'OFF';
+    state.subsystems.gradient = 'OFF';
+    state.subsystems.probe = 'OFF';
+    render();
+
+    buildBootLog();
+    els.bootLog.classList.add('open');
+
+    let delay = 0;
+    STARTUP_STEPS.forEach((step) => {
+      delay += step.dur;
+      setTimeout(() => {
+        const row = document.getElementById('boot-' + step.key);
+        if(row){
+          row.classList.add('done');
+          row.querySelector('.val').textContent = 'OK';
+        }
+        if(step.sub){
+          state.subsystems[step.sub] = 'READY';
+        }
+        if(step.key === 'ready'){
+          state.power = 'READY';
+          startupRunning = false;
+          setTimeout(() => els.bootLog.classList.remove('open'), 900);
+        }
+        render();
+      }, delay);
+    });
+  }
+
+  function shutdown(){
+    startupRunning = false;
+    state.power = 'OFF';
+    state.subsystems.console = 'OFF';
+    state.subsystems.rf = 'OFF';
+    state.subsystems.gradient = 'OFF';
+    state.subsystems.probe = 'OFF';
+    els.bootLog.classList.remove('open');
+    render();
+  }
+
+  function togglePower(){
+    if(state.power === 'OFF'){
+      runStartup();
+    } else if(state.power === 'READY'){
+      shutdown();
+    }
+    // ignore taps while STARTING
+  }
+
+  els.powerBtn.addEventListener('click', togglePower);
+
+  /* ---------------- drawer / menu ---------------- */
+  const MENU = [
+    { id:'system', title:'SYSTEM', items:[
+      { id:'power', label:'Power' },
+      { id:'sysstatus', label:'System Status' },
+      { id:'diagnostics', label:'Diagnostics' },
+      { id:'reset', label:'Reset' }
+    ]},
+    { id:'magnet', title:'MAGNET', items:[
+      { id:'magnetstatus', label:'Magnet Status' },
+      { id:'fieldstatus', label:'Field Status' },
+      { id:'magnettemp', label:'Temperature' }
+    ]},
+    { id:'probe', title:'PROBE', items:[
+      { id:'probestatus', label:'Probe Status' },
+      { id:'probetemp', label:'Probe Temperature' },
+      { id:'probeselect', label:'Probe Selection' }
+    ]},
+    { id:'sample', title:'SAMPLE', items:[
+      { id:'sampleposition', label:'Sample Position' },
+      { id:'sampleload', label:'Sample Load' },
+      { id:'sampleeject', label:'Sample Eject' },
+      { id:'spinner', label:'Spinner' }
+    ]},
+    { id:'lock', title:'LOCK', items:[
+      { id:'lockstatus', label:'Lock Status' },
+      { id:'locklevel', label:'Lock Level' },
+      { id:'lockphase', label:'Lock Phase' }
+    ]},
+    { id:'shim', title:'SHIM', items:[
+      { id:'shimstatus', label:'Shim Status' },
+      { id:'autoshim', label:'Auto Shim' },
+      { id:'manualshim', label:'Manual Shim' }
+    ]},
+    { id:'rfsys', title:'RF SYSTEM', items:[
+      { id:'rfstatus', label:'RF Status' },
+      { id:'rffrequency', label:'Frequency' },
+      { id:'rftransmitter', label:'Transmitter' },
+      { id:'rfreceiver', label:'Receiver' }
+    ]},
+    { id:'acq', title:'ACQUISITION', items:[
+      { id:'acqstatus', label:'Acquisition Status' },
+      { id:'scansettings', label:'Scan Settings' },
+      { id:'receivergain', label:'Receiver Gain' }
+    ]},
+    { id:'data', title:'DATA SYSTEM', items:[
+      { id:'procstatus', label:'Processing Status' },
+      { id:'expstatus', label:'Experiment Status' }
+    ]},
+    { id:'settings', title:'SETTINGS', items:[
+      { id:'instrumentsettings', label:'Instrument Settings' },
+      { id:'simsettings', label:'Simulation Settings' },
+      { id:'resetsim', label:'Reset Simulator' }
+    ]}
+  ];
+
+  function buildMenu(){
+    els.drawerBody.innerHTML = MENU.map(sec => `
+      <div class="acc-section" data-sec="${sec.id}">
+        <button class="acc-head" data-toggle="${sec.id}">
+          <span>${sec.title}</span>
+          <span class="chev">&#9656;</span>
+        </button>
+        <div class="acc-body">
+          ${sec.items.map(it => `<button class="acc-item" data-item="${it.id}">${it.label}</button>`).join('')}
+        </div>
+      </div>
+    `).join('');
+
+    els.drawerBody.querySelectorAll('.acc-head').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const section = btn.closest('.acc-section');
+        const wasOpen = section.classList.contains('open');
+        els.drawerBody.querySelectorAll('.acc-section').forEach(s => s.classList.remove('open'));
+        if(!wasOpen) section.classList.add('open');
+      });
+    });
+
+    els.drawerBody.querySelectorAll('.acc-item').forEach(btn => {
+      btn.addEventListener('click', () => {
+        openSheet(btn.dataset.item);
+        closeDrawer();
+      });
+    });
+  }
+  buildMenu();
+
+  function openDrawer(){
+    els.drawer.classList.add('open');
+    els.overlay.classList.add('open');
+  }
+  function closeDrawer(){
+    els.drawer.classList.remove('open');
+    els.overlay.classList.remove('open');
+  }
+  els.hamburgerBtn.addEventListener('click', openDrawer);
+  els.drawerClose.addEventListener('click', closeDrawer);
+  els.overlay.addEventListener('click', closeDrawer);
+
+  /* ---------------- control sheet content ---------------- */
+  let currentSheetId = null;
+
+  function fieldRow(label, value, cls){
+    return `<div class="field-row"><span class="field-label">${label}</span><span class="field-value ${cls||''}">${value}</span></div>`;
+  }
+
+  function stageNote(text){
+    return `<div class="sheet-note">${text}</div>`;
+  }
+
+  function sheetHTML(id){
+    switch(id){
+      case 'power':
+        return {
+          title:'POWER',
+          body:
+            fieldRow('POWER', state.power === 'OFF' ? 'OFF' : 'ON', state.power==='OFF' ? '' : 'accent') +
+            fieldRow('SYSTEM STATUS', state.power, state.power==='READY' ? 'ok' : state.power==='STARTING' ? 'warn' : ''),
+          actions: [
+            { label: state.power === 'OFF' ? 'TURN ON' : 'TURN OFF', action:'togglePower', primary:true, disabled: state.power==='STARTING' }
+          ]
+        };
+      case 'sysstatus':
+        return {
+          title:'SYSTEM STATUS',
+          body:
+            fieldRow('POWER', state.power, state.power==='READY'?'ok':state.power==='STARTING'?'warn':'') +
+            fieldRow('CONSOLE', state.subsystems.console, state.subsystems.console==='READY'?'ok':'') +
+            fieldRow('RF', state.subsystems.rf, state.subsystems.rf==='READY'?'ok':'') +
+            fieldRow('GRADIENT', state.subsystems.gradient, state.subsystems.gradient==='READY'?'ok':'') +
+            fieldRow('PROBE', state.subsystems.probe, state.subsystems.probe==='READY'?'ok':'') +
+            fieldRow('MAGNET', state.subsystems.magnet, 'ok')
+        };
+      case 'diagnostics':
+        return {
+          title:'DIAGNOSTICS',
+          body: fieldRow('SELF TEST', state.power==='READY' ? 'PASSED' : 'UNAVAILABLE', state.power==='READY'?'ok':'warn'),
+          actions: [{ label:'RUN DIAGNOSTICS', action:'stage2', disabled: state.power!=='READY' }]
+        };
+      case 'reset':
+        return {
+          title:'RESET',
+          body: fieldRow('SIMULATOR STATE', 'NOMINAL'),
+          actions: [{ label:'RESET SYSTEM', action:'resetSystem', danger:true }]
+        };
+      case 'magnetstatus':
+        return {
+          title:'MAGNET STATUS',
+          body: fieldRow('STATUS', state.subsystems.magnet, 'ok') + fieldRow('FIELD', '11.7 T', 'accent')
+        };
+      case 'fieldstatus':
+        return {
+          title:'FIELD STATUS',
+          body: fieldRow('FIELD', '11.7 T', 'accent') + fieldRow('FREQUENCY', '500 MHz', 'accent') + fieldRow('STABILITY', state.power==='READY' ? 'LOCKED' : 'STATIC')
+        };
+      case 'magnettemp':
+        return {
+          title:'MAGNET TEMPERATURE',
+          body: fieldRow('HELIUM', '4.2 K', 'accent') + fieldRow('NITROGEN', '77 K', 'accent')
+        };
+      case 'probestatus':
+        return {
+          title:'PROBE STATUS',
+          body: fieldRow('STATUS', state.subsystems.probe, state.subsystems.probe==='READY'?'ok':'') + fieldRow('TYPE', '5 mm 1H/13C') + fieldRow('TEMPERATURE', '25.0 °C', 'accent')
+        };
+      case 'probetemp':
+        return { title:'PROBE TEMPERATURE', body: fieldRow('CURRENT', '25.0 °C', 'accent') + fieldRow('TARGET', '25.0 °C') };
+      case 'probeselect':
+        return {
+          title:'PROBE SELECTION',
+          body: fieldRow('ACTIVE PROBE', '5 mm 1H/13C', 'accent') + fieldRow('AVAILABLE', '2 configured'),
+          actions:[{ label:'CHANGE PROBE', action:'stage2' }]
+        };
+      case 'sampleposition':
+        return {
+          title:'SAMPLE POSITION',
+          body:
+            fieldRow('POSITION', state.sample.position, state.sample.position==='POSITIONED'?'ok':'') +
+            fieldRow('SAMPLE STATUS', sampleStatusText(), state.sample.status==='LOADED'?'ok':'') +
+            fieldRow('AIR', airStateText(), state.airSystem.pressureState!=='OFF'?'accent':'') +
+            fieldRow('SPINNER', state.spinner.status+' · '+state.spinner.rate+' Hz'),
+          actions: [
+            { label:'LOAD', action:'loadSample', primary:true, disabled: state.sample.status!=='EMPTY' || sampleBusy },
+            { label:'EJECT', action:'ejectSample', disabled: state.sample.status!=='LOADED' || sampleBusy }
+          ]
+        };
+      case 'sampleload':
+        return {
+          title:'SAMPLE LOAD',
+          body: fieldRow('SAMPLE STATUS', sampleStatusText(), state.sample.status==='LOADED'?'ok':'') + fieldRow('PHASE', state.sample.phase || '—'),
+          actions: [{ label:'LOAD SAMPLE', action:'loadSample', primary:true, disabled: state.sample.status!=='EMPTY' || sampleBusy }]
+        };
+      case 'sampleeject':
+        return {
+          title:'SAMPLE EJECT',
+          body: fieldRow('SAMPLE STATUS', sampleStatusText(), state.sample.status==='LOADED'?'ok':'') + fieldRow('PHASE', state.sample.phase || '—'),
+          actions: [{ label:'EJECT SAMPLE', action:'ejectSample', disabled: state.sample.status!=='LOADED' || sampleBusy }]
+        };
+      case 'spinner':
+        return {
+          title:'SAMPLE SPINNER',
+          body:
+            fieldRow('STATUS', state.spinner.status, state.spinner.status==='SPINNING'?'ok':(state.spinner.status==='ACCELERATING'||state.spinner.status==='DECELERATING')?'warn':'') +
+            fieldRow('SPIN RATE', state.spinner.rate+' Hz', 'accent') +
+            fieldRow('TARGET', state.spinner.targetRate+' Hz') +
+            fieldRow('AIR DRIVE', state.airSystem.driveAir ? 'ACTIVE' : 'OFF', state.airSystem.driveAir?'ok':''),
+          actions: [
+            { label:'START SPIN', action:'startSpinner', primary:true, disabled: state.spinner.status!=='STOPPED' || spinnerBusy },
+            { label:'STOP SPIN', action:'stopSpinner', disabled: (state.spinner.status!=='SPINNING' && state.spinner.status!=='ACCELERATING') || spinnerBusy }
+          ]
+        };
+      case 'lockstatus':
+        return { title:'LOCK STATUS', body: fieldRow('STATUS', state.lock.status) + fieldRow('LEVEL', state.lock.level+' %') + fieldRow('PHASE', state.lock.phase+'°') };
+      case 'locklevel':
+        return { title:'LOCK LEVEL', body: fieldRow('LEVEL', state.lock.level+' %'), actions:[{ label:'ACQUIRE LOCK', action:'stage2' }] };
+      case 'lockphase':
+        return { title:'LOCK PHASE', body: fieldRow('PHASE', state.lock.phase+'°'), actions:[{ label:'ADJUST PHASE', action:'stage2' }] };
+      case 'shimstatus':
+        return { title:'SHIM STATUS', body: fieldRow('STATUS', state.shim.status) + fieldRow('FIELD HOMOGENEITY', state.shim.homogeneity) };
+      case 'autoshim':
+        return {
+          title:'AUTO SHIM',
+          body: fieldRow('STATUS', state.shim.status) + fieldRow('FIELD HOMOGENEITY', state.shim.homogeneity),
+          actions: [{ label:'AUTO SHIM', action:'stage2', primary:true }],
+          note: 'Shim module will be implemented in Stage 2.'
+        };
+      case 'manualshim':
+        return { title:'MANUAL SHIM', body: fieldRow('MODE', 'DISABLED'), note:'Manual shim controls arrive in Stage 2.' };
+      case 'rfstatus':
+        return { title:'RF STATUS', body: fieldRow('STATUS', state.rf.status) + fieldRow('FREQUENCY', state.rf.frequency+' MHz', 'accent') + fieldRow('TRANSMITTER', state.rf.transmitter) + fieldRow('RECEIVER', state.rf.receiver) };
+      case 'rffrequency':
+        return { title:'FREQUENCY', body: fieldRow('CURRENT', state.rf.frequency+' MHz', 'accent') + fieldRow('NUCLEUS', '1H') };
+      case 'rftransmitter':
+        return { title:'TRANSMITTER', body: fieldRow('STATUS', state.rf.transmitter), actions:[{ label:'ENABLE', action:'stage2', disabled: state.power!=='READY' }] };
+      case 'rfreceiver':
+        return { title:'RECEIVER', body: fieldRow('STATUS', state.rf.receiver) };
+      case 'acqstatus':
+        return { title:'ACQUISITION STATUS', body: fieldRow('STATUS', state.acquisition.status) + fieldRow('SCANS', state.acquisition.scans) + fieldRow('ACQUISITION TIME', state.acquisition.time+' s') , actions:[{ label:'START', action:'startAcquisition', primary:true, disabled: state.power!=='READY' }] };
+      case 'scansettings':
+        return { title:'SCAN SETTINGS', body: fieldRow('SCANS', state.acquisition.scans) + fieldRow('ACQUISITION TIME', state.acquisition.time+' s') };
+      case 'receivergain':
+        return { title:'RECEIVER GAIN', body: fieldRow('GAIN', 'AUTO') };
+      case 'procstatus':
+        return { title:'PROCESSING STATUS', body: fieldRow('STATUS', state.subsystems.console, state.subsystems.console==='READY'?'ok':'') };
+      case 'expstatus':
+        return { title:'EXPERIMENT STATUS', body: fieldRow('CURRENT EXPERIMENT', 'NONE') };
+      case 'instrumentsettings':
+        return { title:'INSTRUMENT SETTINGS', body: fieldRow('MODEL', 'NMR-500 SIM') + fieldRow('FIRMWARE', 'v0.1.0-stage1') };
+      case 'simsettings':
+        return { title:'SIMULATION SETTINGS', body: fieldRow('MODE', 'STAGE 1 — HARDWARE & POWER') };
+      case 'resetsim':
+        return { title:'RESET SIMULATOR', body: fieldRow('CURRENT STATE', state.power), actions:[{ label:'RESET EVERYTHING', action:'resetSystem', danger:true }] };
+      default:
+        return { title:id, body: fieldRow('STATUS','—') };
+    }
+  }
+
+  function renderSheet(id){
+    const data = sheetHTML(id);
+    let html = `<div class="sheet-title">${data.title}</div>${data.body}`;
+    if(data.actions && data.actions.length){
+      html += `<div class="sheet-actions">${data.actions.map(a =>
+        `<button class="btn ${a.primary?'primary':''} ${a.danger?'danger':''}" data-action="${a.action}" ${a.disabled?'disabled':''}>${a.label}</button>`
+      ).join('')}</div>`;
+    }
+    if(data.note){ html += stageNote(data.note); }
+    els.sheetContent.innerHTML = html;
+
+    els.sheetContent.querySelectorAll('[data-action]').forEach(btn => {
+      btn.addEventListener('click', () => handleAction(btn.dataset.action));
+    });
+  }
+
+  function openSheet(id){
+    currentSheetId = id;
+    renderSheet(id);
+    els.controlSheet.classList.add('open');
+    els.sheetOverlay.classList.add('open');
+  }
+  function closeSheet(){
+    els.controlSheet.classList.remove('open');
+    els.sheetOverlay.classList.remove('open');
+    currentSheetId = null;
+  }
+  els.sheetOverlay.addEventListener('click', closeSheet);
+
+  function handleAction(action){
+    switch(action){
+      case 'togglePower':
+        togglePower();
+        break;
+      case 'loadSample':
+        loadSampleSequence();
+        break;
+      case 'ejectSample':
+        ejectSampleSequence();
+        break;
+      case 'startSpinner':
+        startSpinnerSequence();
+        break;
+      case 'stopSpinner':
+        stopSpinnerSequence();
+        break;
+      case 'startAcquisition':
+        showToast('Acquisition module will be implemented in Stage 2.');
+        break;
+      case 'resetSystem':
+        shutdown();
+        sampleBusy = false;
+        spinnerBusy = false;
+        state.sample = { position:'HOME', status:'EMPTY', phase:'' };
+        state.spinner = { status:'STOPPED', rate:0, targetRate:20, direction:'CW' };
+        state.airSystem = { supportAir:false, driveAir:false, pressureState:'OFF' };
+        state.lock = { status:'STANDBY', level:0, phase:0 };
+        state.shim = { status:'STANDBY', homogeneity:'--' };
+        state.rf = { status:'STANDBY', frequency:500, transmitter:'OFF', receiver:'STANDBY' };
+        state.acquisition = { status:'IDLE', scans:8, time:1.0 };
+        render();
+        closeSheet();
+        showToast('Simulator reset.');
+        break;
+      case 'stage2':
+      default:
+        showToast('This module will be implemented in Stage 2.');
+        break;
+    }
+  }
+
+  /* ---------------- init ---------------- */
+  render();
+
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,10 @@
+{
+  "description": "Experience a high-fidelity educational NMR digital twin that simulates complete NMR workflows, offering interactive control, analysis, and visualization for researchers and students.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}

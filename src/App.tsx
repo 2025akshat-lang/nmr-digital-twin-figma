@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+ import React, { useEffect, useRef } from 'react';
 import { NMRProvider, useNMR } from './NMRContext';
 import TopBar from './components/TopBar';
 import HardwareView from './components/HardwareView';

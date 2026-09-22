@@ -249,14 +249,14 @@ function SimulationController() {
     });
     return () => timers.forEach(clearTimeout);
   }, [state.autoTuning]);
-  // ── Acquisition simulation (Web Worker Updated) ────────────────
 
-  // ── Acquisition simulation (Infinite Loop Fixed) ────────────────
+  // ── Acquisition simulation ────────────────────────────────
   useEffect(() => {
     if (state.acqStatus !== 'PREPARING' && state.acqStatus !== 'ACQUIRING') return;
 
+    // Dummy scans
     if (state.acqStatus === 'PREPARING') {
-      const dsTime = state.DS * (state.D1 + state.AQ) * 200; 
+      const dsTime = state.DS * (state.D1 + state.AQ) * 200; // compressed time
       const t = setTimeout(() => {
         dispatch({ type: 'SET_ACQ_STATUS', payload: 'ACQUIRING' });
         dispatch({ type: 'SET_CURRENT_SCAN', payload: 0 });
@@ -267,35 +267,19 @@ function SimulationController() {
 
     if (state.acqStatus !== 'ACQUIRING' || state.acqPaused) return;
 
-    const scanInterval = Math.max(200, Math.min(1500, (state.D1 + state.AQ) * 300)); 
-    
-    if (acqTimerRef.current) clearInterval(acqTimerRef.current);
-
+    const scanInterval = Math.max(200, Math.min(1500, (state.D1 + state.AQ) * 300)); // compressed
     acqTimerRef.current = setInterval(() => {
       const s = stateRef.current;
-      
-      // Safety Guard 1: अगर स्थिति बदल गई है तो तुरंत लूप बंद करें
-      if (s.acqStatus !== 'ACQUIRING' || s.acqPaused) {
-        if (acqTimerRef.current) clearInterval(acqTimerRef.current);
-        return;
-      }
+      if (s.acqStatus !== 'ACQUIRING' || s.acqPaused) return;
 
       const nextScan = s.currentScan + 1;
-
-      // Safety Guard 2: अगर स्कैन लिमिट पार हो चुकी है, तो रोकें
-      if (nextScan > s.NS) {
-        if (acqTimerRef.current) clearInterval(acqTimerRef.current);
-        return;
-      }
-
       dispatch({ type: 'SET_CURRENT_SCAN', payload: nextScan });
 
+      // Generate FID for this scan
       const sample = SAMPLE_LIBRARY[s.selectedSample];
       const peaks = getPeaksForNucleus(sample, s.nucleus);
       const solventInfo = SOLVENT_INFO[s.solvent];
-
-      // वेब वर्कर को बैकग्राउंड में काम सौंप दिया
-      triggerSimulation('FID', {
+      const fid = generateFID({
         peaks,
         solventPPM: solventInfo.residualPPM,
         showSolvent: true,
@@ -316,24 +300,89 @@ function SimulationController() {
         nucleus13Cmode: s.nucleus === '13C',
         seed: nextScan * 7 + 42,
       });
+      dispatch({ type: 'SET_FID', payload: fid });
 
-            // 🚨 FORCE STOP GUARD: अगर आख़िरी स्कैन (16) पूरा हो गया है
-      if (nextScan === s.NS) {
-        if (acqTimerRef.current) clearInterval(acqTimerRef.current);
-        
-        // वर्कर के भरोसे बैठने के बजाय UI को यहीं सीधे 'COMPLETE' स्टेटस पर सेट कर दें!
-        dispatch({ type: 'SET_ACQ_STATUS', payload: 'COMPLETE' });
+      if (nextScan >= s.NS) {
+        clearInterval(acqTimerRef.current!);
         dispatch({ type: 'ACQUISITION_COMPLETE' });
       }
-
     }, scanInterval);
 
-    return () => { 
-      if (acqTimerRef.current) clearInterval(acqTimerRef.current);
-    };
+    return () => { if (acqTimerRef.current) clearInterval(acqTimerRef.current); };
   }, [state.acqStatus, state.acqPaused]);
 
-  
+  // ── Processing simulation ─────────────────────────────────
+  useEffect(() => {
+    if (state.processingStatus !== 'APODIZING') return;
+    const steps: Array<{ status: ProcessingState; progress: number; delay: number }> = [
+      { status: 'APODIZING',   progress: 15,  delay: 300 },
+      { status: 'ZEROFILLING', progress: 30,  delay: 250 },
+      { status: 'FOURIER',     progress: 55,  delay: 400 },
+      { status: 'PHASE',       progress: 70,  delay: 250 },
+      { status: 'BASELINE',    progress: 85,  delay: 200 },
+      { status: 'REFERENCE',   progress: 95,  delay: 150 },
+    ];
+    let cumDelay = 0;
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    steps.forEach(step => {
+      cumDelay += step.delay;
+      const t = setTimeout(() => {
+        dispatch({ type: 'SET_PROCESSING_STATUS', payload: step.status });
+        dispatch({ type: 'SET_PROCESSING_PROGRESS', payload: step.progress });
+        if (step.status === 'ADD_EVENT' as any) {
+          dispatch({ type: 'ADD_EVENT', payload: { message: `Processing: ${step.status}`, level: 'INFO' } });
+        }
+      }, cumDelay);
+      timers.push(t);
+    });
+
+    // Generate spectrum after all steps
+    cumDelay += 200;
+    const finalTimer = setTimeout(() => {
+      const s = stateRef.current;
+      const sample = SAMPLE_LIBRARY[s.selectedSample];
+      const peaks = getPeaksForNucleus(sample, s.nucleus);
+      const solventInfo = SOLVENT_INFO[s.solvent];
+
+      if (peaks.length === 0 && (s.nucleus === '19F' || s.nucleus === '31P')) {
+        dispatch({
+          type: 'ADD_EVENT',
+          payload: { message: `No ${s.nucleus} reference peaks defined for ${sample?.name ?? s.selectedSample} — spectrum will show baseline/solvent only`, level: 'WARNING' },
+        });
+      }
+
+      const spectrum = generateSpectrum({
+        peaks,
+        solventPPM: solventInfo.residualPPM,
+        showSolvent: true,
+        suppressSolvent: s.solventSuppression,
+        suppressionStrength: s.suppressionStrength,
+        nucleus: s.nucleus,
+        shimQuality: s.shimQuality,
+        receiverGain: s.receiverGain,
+        NS: s.NS,
+        concentration: s.concentration,
+        phaseCorr0: s.phaseCorr0,
+        phaseCorr1: s.phaseCorr1,
+        apodLB: s.apodLB,
+        windowFunction: s.windowFunction,
+        magnitudeMode: s.magnitudeMode,
+        solventSuppression: s.solventSuppression,
+        decouplerOn: s.decouplerOn,
+        referenceShift: s.referenceShift,
+        spinnerArtifact: s.spinnerStatus !== 'STOPPED' && s.shimQuality < 0.6,
+        spinRate: s.spinRate,
+        nPoints: 4096,
+      });
+
+      dispatch({ type: 'SET_SPECTRUM', payload: spectrum });
+      dispatch({ type: 'PROCESSING_COMPLETE' });
+      dispatch({ type: 'SET_ACTIVE_PANEL', payload: 'peaks' });
+    }, cumDelay);
+    timers.push(finalTimer);
+
+    return () => timers.forEach(clearTimeout);
+  }, [state.processingStatus === 'APODIZING' ? state.processingStatus : null]);
 
   // ── 2D NMR simulation ─────────────────────────────────────
   useEffect(() => {
@@ -617,4 +666,4 @@ export default function App() {
       <NMRApp />
     </NMRProvider>
   );
-}
+                  }

@@ -249,14 +249,13 @@ function SimulationController() {
     });
     return () => timers.forEach(clearTimeout);
   }, [state.autoTuning]);
-
-  // ── Acquisition simulation ────────────────────────────────
+  // ── Acquisition simulation (Web Worker Updated) ────────────────
   useEffect(() => {
     if (state.acqStatus !== 'PREPARING' && state.acqStatus !== 'ACQUIRING') return;
 
     // Dummy scans
     if (state.acqStatus === 'PREPARING') {
-      const dsTime = state.DS * (state.D1 + state.AQ) * 200; // compressed time
+      const dsTime = state.DS * (state.D1 + state.AQ) * 200; 
       const t = setTimeout(() => {
         dispatch({ type: 'SET_ACQ_STATUS', payload: 'ACQUIRING' });
         dispatch({ type: 'SET_CURRENT_SCAN', payload: 0 });
@@ -267,7 +266,7 @@ function SimulationController() {
 
     if (state.acqStatus !== 'ACQUIRING' || state.acqPaused) return;
 
-    const scanInterval = Math.max(200, Math.min(1500, (state.D1 + state.AQ) * 300)); // compressed
+    const scanInterval = Math.max(200, Math.min(1500, (state.D1 + state.AQ) * 300)); 
     acqTimerRef.current = setInterval(() => {
       const s = stateRef.current;
       if (s.acqStatus !== 'ACQUIRING' || s.acqPaused) return;
@@ -275,11 +274,14 @@ function SimulationController() {
       const nextScan = s.currentScan + 1;
       dispatch({ type: 'SET_CURRENT_SCAN', payload: nextScan });
 
-      // Generate FID for this scan
+      // पुराने डायरेक्ट फंक्शन को हटाकर, अब हम यहाँ से सीधे Context के वर्कर को कॉल कर रहे हैं
       const sample = SAMPLE_LIBRARY[s.selectedSample];
       const peaks = getPeaksForNucleus(sample, s.nucleus);
       const solventInfo = SOLVENT_INFO[s.solvent];
-      const fid = generateFID({
+
+      // Context के नए वर्कर सिस्टम का उपयोग:
+      const { triggerSimulation } = useNMR();
+      triggerSimulation('FID', {
         peaks,
         solventPPM: solventInfo.residualPPM,
         showSolvent: true,
@@ -300,89 +302,17 @@ function SimulationController() {
         nucleus13Cmode: s.nucleus === '13C',
         seed: nextScan * 7 + 42,
       });
-      dispatch({ type: 'SET_FID', payload: fid });
 
       if (nextScan >= s.NS) {
         clearInterval(acqTimerRef.current!);
-        dispatch({ type: 'ACQUISITION_COMPLETE' });
+        // ACQUISITION_COMPLETE अब वर्कर खुद हैंडल करेगा
       }
     }, scanInterval);
 
     return () => { if (acqTimerRef.current) clearInterval(acqTimerRef.current); };
   }, [state.acqStatus, state.acqPaused]);
 
-  // ── Processing simulation ─────────────────────────────────
-  useEffect(() => {
-    if (state.processingStatus !== 'APODIZING') return;
-    const steps: Array<{ status: ProcessingState; progress: number; delay: number }> = [
-      { status: 'APODIZING',   progress: 15,  delay: 300 },
-      { status: 'ZEROFILLING', progress: 30,  delay: 250 },
-      { status: 'FOURIER',     progress: 55,  delay: 400 },
-      { status: 'PHASE',       progress: 70,  delay: 250 },
-      { status: 'BASELINE',    progress: 85,  delay: 200 },
-      { status: 'REFERENCE',   progress: 95,  delay: 150 },
-    ];
-    let cumDelay = 0;
-    const timers: ReturnType<typeof setTimeout>[] = [];
-    steps.forEach(step => {
-      cumDelay += step.delay;
-      const t = setTimeout(() => {
-        dispatch({ type: 'SET_PROCESSING_STATUS', payload: step.status });
-        dispatch({ type: 'SET_PROCESSING_PROGRESS', payload: step.progress });
-        if (step.status === 'ADD_EVENT' as any) {
-          dispatch({ type: 'ADD_EVENT', payload: { message: `Processing: ${step.status}`, level: 'INFO' } });
-        }
-      }, cumDelay);
-      timers.push(t);
-    });
-
-    // Generate spectrum after all steps
-    cumDelay += 200;
-    const finalTimer = setTimeout(() => {
-      const s = stateRef.current;
-      const sample = SAMPLE_LIBRARY[s.selectedSample];
-      const peaks = getPeaksForNucleus(sample, s.nucleus);
-      const solventInfo = SOLVENT_INFO[s.solvent];
-
-      if (peaks.length === 0 && (s.nucleus === '19F' || s.nucleus === '31P')) {
-        dispatch({
-          type: 'ADD_EVENT',
-          payload: { message: `No ${s.nucleus} reference peaks defined for ${sample?.name ?? s.selectedSample} — spectrum will show baseline/solvent only`, level: 'WARNING' },
-        });
-      }
-
-      const spectrum = generateSpectrum({
-        peaks,
-        solventPPM: solventInfo.residualPPM,
-        showSolvent: true,
-        suppressSolvent: s.solventSuppression,
-        suppressionStrength: s.suppressionStrength,
-        nucleus: s.nucleus,
-        shimQuality: s.shimQuality,
-        receiverGain: s.receiverGain,
-        NS: s.NS,
-        concentration: s.concentration,
-        phaseCorr0: s.phaseCorr0,
-        phaseCorr1: s.phaseCorr1,
-        apodLB: s.apodLB,
-        windowFunction: s.windowFunction,
-        magnitudeMode: s.magnitudeMode,
-        solventSuppression: s.solventSuppression,
-        decouplerOn: s.decouplerOn,
-        referenceShift: s.referenceShift,
-        spinnerArtifact: s.spinnerStatus !== 'STOPPED' && s.shimQuality < 0.6,
-        spinRate: s.spinRate,
-        nPoints: 4096,
-      });
-
-      dispatch({ type: 'SET_SPECTRUM', payload: spectrum });
-      dispatch({ type: 'PROCESSING_COMPLETE' });
-      dispatch({ type: 'SET_ACTIVE_PANEL', payload: 'peaks' });
-    }, cumDelay);
-    timers.push(finalTimer);
-
-    return () => timers.forEach(clearTimeout);
-  }, [state.processingStatus === 'APODIZING' ? state.processingStatus : null]);
+  
 
   // ── 2D NMR simulation ─────────────────────────────────────
   useEffect(() => {

@@ -1,4 +1,9 @@
-import React, { createContext, useContext, useReducer, useCallback, useRef } from 'react';
+import React, {
+  createContext,
+  useContext,
+  useReducer,
+  useEffect,
+} from 'react';
 import type {
   NMRState, NMRAction, PanelId, Nucleus, Solvent, ShimValues,
   SampleState, AirState, SpinnerStatus, LockState, TuneState,
@@ -12,6 +17,16 @@ import {
   EXPERIMENT_PRESETS, NUCLEUS_PPM_RANGE,
 } from './simulation';
 
+import {
+  calculateSamplePosition,
+  getSampleLoadSequence,
+  getSampleEjectSequence,
+  canStartSpinner,
+  updateSpinner,
+  getAirFlowForState,
+  updateLock,
+  canStartLock,
+} from './NMRHardwareModel';
 // ────────────────────────────────────────────────────────────
 // Initial State
 // ────────────────────────────────────────────────────────────
@@ -233,63 +248,72 @@ function nmrReducer(state: NMRState, action: NMRAction): NMRState {
       return { ...state, ...updates };
     }
 
-    case 'LOAD_SAMPLE': {
-      if (state.power === 'OFF') return state;
-      if (state.sampleState !== 'NONE' && state.sampleState !== 'EJECTED') return state;
-      return {
-        ...state,
-        sampleState: 'LOADING',
-        airState: 'EJECT',
-        airFlow: 8.5,
-        sampleYPct: 0,
-        eventLog: addEvent(state.eventLog, 'Sample loading — air eject active', 'INFO'),
-      };
-    }
+case 'LOAD_SAMPLE': {
+  const transition = getSampleLoadSequence({
+    power: state.power,
+    sampleState: state.sampleState,
+  });
 
-    case 'EJECT_SAMPLE': {
-      if (state.spinnerStatus !== 'STOPPED') {
-        return {
-          ...state,
-          notification: { visible: true, level: 'ERROR', title: 'EJECTION BLOCKED', message: 'Stop spinner before ejecting sample.' },
-          eventLog: addEvent(state.eventLog, 'EJECTION BLOCKED: spinner active', 'ERROR'),
-        };
-      }
-      return {
-        ...state,
-        sampleState: 'EJECTING',
-        airState: 'EJECT',
-        airFlow: 10.0,
-        lockStatus: 'OFF',
-        lockLevel: 0,
-        spinnerStatus: 'STOPPED',
-        spinRate: 0,
-        eventLog: addEvent(state.eventLog, 'Sample ejection initiated', 'INFO'),
-      };
-    }
+  return {
+    ...state,
+    ...transition,
+    eventLog: transition.eventMessage
+      ? addEvent(
+          state.eventLog,
+          transition.eventMessage,
+          transition.eventLevel ?? 'INFO'
+        )
+      : state.eventLog,
+  };
+}
 
+    
     case 'SET_SAMPLE_STATE':
       return { ...state, sampleState: action.payload };
 
-    case 'SET_SAMPLE_Y': {
-      const pct = action.payload;
-      // Derive air state from sample position
-      let airState = state.airState;
-      let airFlow = state.airFlow;
-      if (state.sampleState === 'LOADING' || state.sampleState === 'POSITIONING') {
-        if (pct < 20) { airState = 'EJECT'; airFlow = 8.5; }
-        else if (pct < 50) { airState = 'CUSHIONING'; airFlow = 6.0; }
-        else if (pct < 80) { airState = 'SUPPORT'; airFlow = 3.0; }
-        else { airState = 'DRIVE'; airFlow = 1.5; }
-      } else if (state.sampleState === 'EJECTING') {
-        if (pct > 20) { airState = 'EJECT'; airFlow = 10.0; }
-        else { airState = 'OFF'; airFlow = 0; }
-      }
-      return { ...state, sampleYPct: pct, airState, airFlow };
-    }
+case 'EJECT_SAMPLE': {
+  const transition = getSampleEjectSequence({
+    spinnerStatus: state.spinnerStatus,
+    sampleState: state.sampleState,
+  });
 
-    case 'SET_AIR_STATE':
-      return { ...state, airState: action.payload };
+  return {
+    ...state,
+    ...transition,
+    eventLog: transition.eventMessage
+      ? addEvent(
+          state.eventLog,
+          transition.eventMessage,
+          transition.eventLevel ?? 'INFO'
+        )
+      : state.eventLog,
+  };
+}    
+case 'SET_SAMPLE_Y': {
+  const sequence =
+    state.sampleState === 'EJECTING'
+      ? 'EJECTING'
+      : 'LOADING';
 
+  const transition = calculateSamplePosition(
+    action.payload,
+    sequence
+  );
+
+  return {
+    ...state,
+    ...transition,
+  };
+}
+case 'SET_AIR_STATE': {
+  const airState = action.payload;
+
+  return {
+    ...state,
+    airState,
+    airFlow: getAirFlowForState(airState),
+  };
+}
     case 'SET_AIR_FLOW':
       return { ...state, airFlow: action.payload };
 
@@ -313,10 +337,60 @@ function nmrReducer(state: NMRState, action: NMRAction): NMRState {
 
     case 'SET_SAMPLE_ID':
       return { ...state, sampleId: action.payload };
+case 'SET_SPINNER_STATUS': {
+  const requested = action.payload;
 
-    case 'SET_SPINNER_STATUS':
-      return { ...state, spinnerStatus: action.payload };
+  const spinnerStarting =
+    requested === 'ACCELERATING' ||
+    requested === 'STABLE';
 
+  if (spinnerStarting) {
+    const check = canStartSpinner({
+      power: state.power,
+      sampleState: state.sampleState,
+    });
+
+    if (!check.allowed) {
+      return {
+        ...state,
+        notification: {
+          visible: true,
+          level:
+            state.power !== 'READY'
+              ? 'ERROR'
+              : 'WARNING',
+          title: 'SPINNER INTERLOCK',
+          message: check.reason ?? 'Spinner start not permitted.',
+        },
+        eventLog: addEvent(
+          state.eventLog,
+          `SPINNER BLOCKED: ${check.reason ?? 'interlock active'}`,
+          state.power !== 'READY' ? 'ERROR' : 'WARNING'
+        ),
+      };
+    }
+  }
+
+  return {
+    ...state,
+    spinnerStatus: requested,
+    airState: spinnerStarting
+      ? 'DRIVE'
+      : requested === 'STOPPED'
+        ? 'SUPPORT'
+        : requested === 'DECELERATING'
+          ? 'DRIVE'
+          : state.airState,
+    airFlow: spinnerStarting
+      ? getAirFlowForState('DRIVE')
+      : requested === 'STOPPED'
+        ? getAirFlowForState('SUPPORT')
+        : requested === 'DECELERATING'
+          ? getAirFlowForState('DRIVE')
+          : state.airFlow,
+  };
+}
+    
     case 'SET_SPIN_RATE':
       return { ...state, spinRate: action.payload };
 
@@ -393,19 +467,130 @@ function nmrReducer(state: NMRState, action: NMRAction): NMRState {
       return { ...state, lockStatus: 'OFF', lockLevel: 0, eventLog: addEvent(state.eventLog, 'Lock released', 'WARNING') };
 
     case 'SET_LOCK_STATE': {
-      const updates: Partial<NMRState> = { lockStatus: action.payload };
-      if (action.payload === 'LOCKED') {
-        updates.eventLog = addEvent(state.eventLog, `Lock acquired — ${state.solvent}`, 'INFO');
-        updates.notification = { visible: true, level: 'INFO', title: 'LOCK ACQUIRED', message: `Deuterium lock established on ${state.solvent}` };
-        updates.fieldStability = 0.03;
-      } else if (action.payload === 'LOST') {
-        updates.eventLog = addEvent(state.eventLog, 'LOCK LOST — field drift detected', 'ERROR');
-        updates.notification = { visible: true, level: 'ERROR', title: 'LOCK LOST', message: 'Re-acquire lock before continuing.' };
-        updates.fieldStability = 2.0;
-      }
-      return { ...state, ...updates };
-    }
+  const requested = action.payload;
 
+  // ─────────────────────────────────────
+  // LOCK ACQUISITION INTERLOCK
+  // ─────────────────────────────────────
+  if (
+    requested === 'SEARCHING' ||
+    requested === 'DETECTED' ||
+    requested === 'OPTIMIZING' ||
+    requested === 'LOCKED'
+  ) {
+    const check = canStartLock({
+      power: state.power,
+      sampleState: state.sampleState,
+      solvent: state.solvent,
+      probeStatus: state.probeStatus,
+    });
+
+    if (!check.allowed) {
+      return {
+        ...state,
+        notification: {
+          visible: true,
+          level: state.power !== 'READY'
+            ? 'ERROR'
+            : 'WARNING',
+          title: 'LOCK INTERLOCK',
+          message:
+            check.reason ??
+            'Lock acquisition not permitted.',
+        },
+        eventLog: addEvent(
+          state.eventLog,
+          `LOCK BLOCKED: ${
+            check.reason ?? 'interlock active'
+          }`,
+          state.power !== 'READY'
+            ? 'ERROR'
+            : 'WARNING'
+        ),
+      };
+    }
+  }
+
+  // ─────────────────────────────────────
+  // EXISTING LOCK STATE LOGIC
+  // ─────────────────────────────────────
+  const updates: Partial<NMRState> = {
+    lockStatus: requested,
+  };
+
+  if (requested === 'SEARCHING') {
+    updates.lockLevel = 0;
+    updates.eventLog = addEvent(
+      state.eventLog,
+      'Deuterium lock search initiated',
+      'INFO'
+    );
+  }
+
+  else if (requested === 'DETECTED') {
+    updates.eventLog = addEvent(
+      state.eventLog,
+      'Deuterium lock signal detected',
+      'INFO'
+    );
+  }
+
+  else if (requested === 'OPTIMIZING') {
+    updates.eventLog = addEvent(
+      state.eventLog,
+      'Lock optimization in progress',
+      'INFO'
+    );
+  }
+
+  else if (requested === 'LOCKED') {
+    updates.eventLog = addEvent(
+      state.eventLog,
+      `Lock acquired — ${state.solvent}`,
+      'INFO'
+    );
+
+    updates.notification = {
+      visible: true,
+      level: 'INFO',
+      title: 'LOCK ACQUIRED',
+      message: `Deuterium lock established on ${state.solvent}`,
+    };
+
+    updates.fieldStability = 0.03;
+    updates.lockLevel = 100;
+  }
+
+  else if (requested === 'LOST') {
+    updates.eventLog = addEvent(
+      state.eventLog,
+      'LOCK LOST — field drift detected',
+      'ERROR'
+    );
+
+    updates.notification = {
+      visible: true,
+      level: 'ERROR',
+      title: 'LOCK LOST',
+      message: 'Re-acquire lock before continuing.',
+    };
+
+    updates.fieldStability = 2.0;
+    updates.lockLevel = Math.max(
+      0,
+      state.lockLevel - 20
+    );
+  }
+
+  else if (requested === 'OFF') {
+    updates.lockLevel = 0;
+  }
+
+  return {
+    ...state,
+    ...updates,
+  };
+}
     case 'SET_LOCK_LEVEL':
       return { ...state, lockLevel: action.payload };
 
@@ -841,7 +1026,133 @@ interface NMRContextValue {
 const NMRContext = createContext<NMRContextValue | null>(null);
 
 export function NMRProvider({ children }: { children: React.ReactNode }) {
-  const [state, dispatch] = useReducer(nmrReducer, undefined, makeInitialState);
+  const [state, dispatch] = useReducer(
+    nmrReducer,
+    undefined,
+    makeInitialState
+  );
+
+  // ─────────────────────────────────────────
+  // USE EFFECT 1 — SPINNER MOTION
+  // ─────────────────────────────────────────
+  useEffect(() => {
+    if (
+      state.spinnerStatus !== 'ACCELERATING' &&
+      state.spinnerStatus !== 'DECELERATING'
+    ) {
+      return;
+    }
+
+    const interval = window.setInterval(() => {
+      const result = updateSpinner(
+        state.spinRate,
+        state.targetSpinRate,
+        state.spinnerStatus,
+        0.1
+      );
+
+      dispatch({
+        type: 'SET_SPINNER_STATUS',
+        payload: result.status,
+      });
+
+      dispatch({
+        type: 'SET_SPIN_RATE',
+        payload: result.spinRate,
+      });
+
+      dispatch({
+        type: 'SET_AIR_STATE',
+        payload: result.airState,
+      });
+    }, 100);
+
+    return () => {
+      window.clearInterval(interval);
+    };
+  }, [
+    state.spinnerStatus,
+    state.spinRate,
+    state.targetSpinRate,
+  ]);
+
+  // ─────────────────────────────────────────
+  // USE EFFECT 2 — SAMPLE MOVEMENT
+  // ─────────────────────────────────────────
+  useEffect(() => {
+    if (
+      state.sampleState !== 'LOADING' &&
+      state.sampleState !== 'POSITIONING' &&
+      state.sampleState !== 'EJECTING'
+    ) {
+      return;
+    }
+
+    const interval = window.setInterval(() => {
+      const step =
+        state.sampleState === 'EJECTING'
+          ? -4
+          : 4;
+
+      const nextY = Math.max(
+        0,
+        Math.min(100, state.sampleYPct + step)
+      );
+
+      dispatch({
+        type: 'SET_SAMPLE_Y',
+        payload: nextY,
+      });
+    }, 100);
+
+    return () => {
+      window.clearInterval(interval);
+    };
+  }, [
+    state.sampleState,
+    state.sampleYPct,
+  ]);
+  // ─────────────────────────────────────────
+// USE EFFECT 3 — LOCK ACQUISITION
+// ─────────────────────────────────────────
+useEffect(() => {
+  if (
+    state.lockStatus !== 'SEARCHING' &&
+    state.lockStatus !== 'DETECTED' &&
+    state.lockStatus !== 'OPTIMIZING'
+  ) {
+    return;
+  }
+
+  const interval = window.setInterval(() => {
+    const result = updateLock(
+      state.lockStatus,
+      state.lockLevel,
+      0.1
+    );
+
+    dispatch({
+      type: 'SET_LOCK_STATE',
+      payload: result.status,
+    });
+
+    dispatch({
+      type: 'SET_LOCK_LEVEL',
+      payload: result.level,
+    });
+  }, 100);
+
+  return () => {
+    window.clearInterval(interval);
+  };
+}, [
+  state.lockStatus,
+  state.lockLevel,
+]);
+
+  // ─────────────────────────────────────────
+  // PROVIDER RETURN
+  // ─────────────────────────────────────────
   return (
     <NMRContext.Provider value={{ state, dispatch }}>
       {children}
@@ -853,4 +1164,4 @@ export function useNMR(): NMRContextValue {
   const ctx = useContext(NMRContext);
   if (!ctx) throw new Error('useNMR must be used within NMRProvider');
   return ctx;
-        }
+}

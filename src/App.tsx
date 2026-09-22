@@ -250,10 +250,11 @@ function SimulationController() {
     return () => timers.forEach(clearTimeout);
   }, [state.autoTuning]);
   // ── Acquisition simulation (Web Worker Updated) ────────────────
+
+  // ── Acquisition simulation (Infinite Loop Fixed) ────────────────
   useEffect(() => {
     if (state.acqStatus !== 'PREPARING' && state.acqStatus !== 'ACQUIRING') return;
 
-    // Dummy scans
     if (state.acqStatus === 'PREPARING') {
       const dsTime = state.DS * (state.D1 + state.AQ) * 200; 
       const t = setTimeout(() => {
@@ -267,20 +268,33 @@ function SimulationController() {
     if (state.acqStatus !== 'ACQUIRING' || state.acqPaused) return;
 
     const scanInterval = Math.max(200, Math.min(1500, (state.D1 + state.AQ) * 300)); 
+    
+    if (acqTimerRef.current) clearInterval(acqTimerRef.current);
+
     acqTimerRef.current = setInterval(() => {
       const s = stateRef.current;
-      if (s.acqStatus !== 'ACQUIRING' || s.acqPaused) return;
+      
+      // Safety Guard 1: अगर स्थिति बदल गई है तो तुरंत लूप बंद करें
+      if (s.acqStatus !== 'ACQUIRING' || s.acqPaused) {
+        if (acqTimerRef.current) clearInterval(acqTimerRef.current);
+        return;
+      }
 
       const nextScan = s.currentScan + 1;
+
+      // Safety Guard 2: अगर स्कैन लिमिट पार हो चुकी है, तो रोकें
+      if (nextScan > s.NS) {
+        if (acqTimerRef.current) clearInterval(acqTimerRef.current);
+        return;
+      }
+
       dispatch({ type: 'SET_CURRENT_SCAN', payload: nextScan });
 
-      // पुराने डायरेक्ट फंक्शन को हटाकर, अब हम यहाँ से सीधे Context के वर्कर को कॉल कर रहे हैं
       const sample = SAMPLE_LIBRARY[s.selectedSample];
       const peaks = getPeaksForNucleus(sample, s.nucleus);
       const solventInfo = SOLVENT_INFO[s.solvent];
 
-      // Context के नए वर्कर सिस्टम का उपयोग:
-      const { triggerSimulation } = useNMR();
+      // वेब वर्कर को बैकग्राउंड में काम सौंप दिया
       triggerSimulation('FID', {
         peaks,
         solventPPM: solventInfo.residualPPM,
@@ -303,13 +317,14 @@ function SimulationController() {
         seed: nextScan * 7 + 42,
       });
 
-      if (nextScan >= s.NS) {
-        clearInterval(acqTimerRef.current!);
-        // ACQUISITION_COMPLETE अब वर्कर खुद हैंडल करेगा
+      if (nextScan === s.NS) {
+        if (acqTimerRef.current) clearInterval(acqTimerRef.current);
       }
     }, scanInterval);
 
-    return () => { if (acqTimerRef.current) clearInterval(acqTimerRef.current); };
+    return () => { 
+      if (acqTimerRef.current) clearInterval(acqTimerRef.current);
+    };
   }, [state.acqStatus, state.acqPaused]);
 
   

@@ -578,7 +578,7 @@ function NMRApp() {
             <div
               className="flex-shrink-0 overflow-y-auto"
               style={{
-                width: showConsole ? '0px' : '420px',
+                width: showConsole ? '0px' : '377px',
                 transition: 'width 0.2s ease',
                 borderRight: '1px solid #333333',
                 overflow: showConsole ? 'hidden' : 'auto',

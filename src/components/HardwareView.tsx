@@ -308,7 +308,7 @@ export default function HardwareView() {
       {/* ── Magnet Cross-Section SVG ─── */}
       <div className="nmr-panel flex-shrink-0">
         <div className="nmr-panel-header">INSTRUMENT VIEW — 500 MHz NMR</div>
-        <flex flex-row justify-center items-start gap-6 p-4 w-full max-w-5xl mx-auto>
+        <div className="flex flex-row justify-center items-start gap-6 p-4 w-full max-w-5xl mx-auto">
 
           {/* Magnet SVG */}
           <svg width="180" height="320" viewBox="0 0 180 320" style={{ flexShrink: 0 }}>

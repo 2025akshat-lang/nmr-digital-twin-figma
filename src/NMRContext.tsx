@@ -859,7 +859,7 @@ export function NMRProvider({ children }: { children: React.ReactNode }) {
       { type: 'module' }
     );
 
-    // जब बैकग्राउंड थ्रेड भारी कैलकुलेशन पूरी करके डेटा भेजेगा
+      // जब बैकग्राउंड थ्रेड भारी कैलकुलेशन पूरी करके डेटा भेजेगा
     workerRef.current.onmessage = (event: MessageEvent) => {
       const { type, success, data, error } = event.data;
       setIsCalculating(false);
@@ -867,9 +867,10 @@ export function NMRProvider({ children }: { children: React.ReactNode }) {
       if (success) {
         if (type === 'GENERATE_FID') {
           dispatch({ type: 'SET_FID', payload: data });
-          dispatch({ type: 'ACQUISITION_COMPLETE' });
+          dispatch({ type: 'SET_ACQ_STATUS', payload: 'COMPLETE' }); // <--- स्टेटस अपडेट गार्ड
         } else if (type === 'GENERATE_SPECTRUM') {
           dispatch({ type: 'SET_SPECTRUM', payload: data });
+          dispatch({ type: 'SET_PROCESSING_STATUS', payload: 'COMPLETE' }); // <--- प्रोसेसिंग स्टेटस अपडेट
           dispatch({ type: 'PROCESSING_COMPLETE' });
         } else if (type === 'GENERATE_2D') {
           dispatch({ type: 'SET_2D_DATA', payload: data });
@@ -880,6 +881,8 @@ export function NMRProvider({ children }: { children: React.ReactNode }) {
         dispatch({ type: 'ADD_EVENT', payload: { message: `Simulation Failed: ${error}`, level: 'ERROR' } });
       }
     };
+  
+      
 
     return () => {
       workerRef.current?.terminate();

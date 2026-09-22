@@ -666,4 +666,4 @@ export default function App() {
       <NMRApp />
     </NMRProvider>
   );
-                  }
+}

@@ -102,7 +102,11 @@ function SpinnerViz({ rate, status }: { rate: number; status: string }) {
       ctx.lineWidth = 1.5;
       ctx.stroke();
 
-      if (status !== 'STOPPED') {
+      if (
+  status === 'ACCELERATING' ||
+  status === 'STABLE' ||
+  status === 'DECELERATING'
+) {
         // Spinning tick marks
         const speed = rate / 20 * 0.06;
         angleRef.current += speed;
@@ -301,7 +305,41 @@ export default function HardwareView() {
 
   const canEject = state.sampleState === 'POSITIONED' && state.spinnerStatus === 'STOPPED';
   const canLoad = state.sampleState === 'NONE' || state.sampleState === 'EJECTED';
+const canStartSpinner =
+  state.power === 'READY' &&
+  state.sampleState === 'POSITIONED' &&
+  (
+    state.spinnerStatus === 'STOPPED' ||
+    state.spinnerStatus === 'DECELERATING'
+  );
 
+const spinnerRunning =
+  state.spinnerStatus === 'ACCELERATING' ||
+  state.spinnerStatus === 'STABLE';
+
+const spinnerStopping =
+  state.spinnerStatus === 'DECELERATING';
+ const lockCanStart =
+  state.power === 'READY' &&
+  state.sampleState === 'POSITIONED' &&
+  state.solvent !== 'None' &&
+  state.probeStatus === 'READY' &&
+  (
+    state.lockStatus === 'OFF' ||
+    state.lockStatus === 'LOST'
+  );
+
+const lockAcquiring =
+  state.lockStatus === 'SEARCHING' ||
+  state.lockStatus === 'DETECTED' ||
+  state.lockStatus === 'OPTIMIZING';
+
+const lockIsStable =
+  state.lockStatus === 'LOCKED'; 
+
+const spinnerInterlocked =
+  state.sampleState !== 'POSITIONED' ||
+  state.power !== 'READY';
   return (
     <div className="flex flex-col h-full overflow-y-auto" style={{ gap: '8px', padding: '8px' }}>
 
@@ -378,20 +416,71 @@ export default function HardwareView() {
             )}
 
             {/* Air flow indicator */}
-            {state.airState !== 'OFF' && (
-              <>
-                {[0, 1, 2].map(i => (
-                  <g key={i}>
-                    <line x1={68} y1={80 + i * 60} x2={68} y2={100 + i * 60}
-                      stroke="#ffab00" strokeWidth="1" opacity="0.6" markerEnd="url(#arr)" />
-                  </g>
-                ))}
-                <text x="62" y="75" fill="#ffab00" fontSize="10" fontFamily="JetBrains Mono,monospace">
-                  AIR:{state.airState}
-                </text>
-              </>
-            )}
+{state.airState !== 'OFF' && (
+  <>
+    {/* Dynamic airflow particles */}
+    {[0, 1, 2, 3, 4].map(i => {
+      const activeParticles =
+        state.airState === 'EJECT' ? 5 :
+        state.airState === 'CUSHIONING' ? 4 :
+        state.airState === 'SUPPORT' ? 2 :
+        state.airState === 'DRIVE' ? 3 : 0;
 
+      if (i >= activeParticles) return null;
+
+      const y = 82 + i * 42;
+
+      return (
+        <g key={i}>
+          <line
+            x1="68"
+            y1={y}
+            x2="68"
+            y2={y + 18}
+            stroke="#ffab00"
+            strokeWidth={state.airState === 'EJECT' ? 1.5 : 1}
+            opacity={state.airState === 'EJECT' ? 0.9 : 0.55}
+            strokeDasharray={
+              state.airState === 'DRIVE'
+                ? '2,2'
+                : '4,3'
+            }
+          />
+
+          <circle
+            cx="68"
+            cy={y + 18}
+            r={state.airState === 'EJECT' ? 2 : 1.3}
+            fill="#ffab00"
+            opacity={0.8}
+          />
+        </g>
+      );
+    })}
+
+    {/* Pneumatic state */}
+    <text
+      x="62"
+      y="75"
+      fill="#ffab00"
+      fontSize="8"
+      fontFamily="JetBrains Mono,monospace"
+    >
+      AIR:{state.airState}
+    </text>
+
+    {/* Flow value */}
+    <text
+      x="62"
+      y="286"
+      fill="#ffab00"
+      fontSize="7"
+      fontFamily="JetBrains Mono,monospace"
+    >
+      {state.airFlow.toFixed(1)} L/m
+    </text>
+  </>
+)}
             {/* Top cap */}
             <rect x="74" y="5" width="32" height="8" rx="2" fill="#0b1d35" stroke="#1a3a5c" strokeWidth="1" />
             <text x="90" y="11" textAnchor="middle" fill="#3a6a8f" fontSize="6" fontFamily="JetBrains Mono,monospace">BORE</text>
@@ -406,6 +495,7 @@ export default function HardwareView() {
               height={230 * state.heliumLevel / 100} rx="2" fill="#00aacc" opacity="0.5" />
             <text x="165" y="60" fill="#00aacc" fontSize="6" fontFamily="JetBrains Mono,monospace" transform="rotate(90,165,60)">He {state.heliumLevel}%</text>
           </svg>
+
 
           {/* Right panel: hardware status rows */}
           <div className="flex flex-col gap-2 flex-1 min-w-0">
@@ -451,19 +541,73 @@ export default function HardwareView() {
                   <HWRow label="SOLVENT" value={state.solvent} status={state.solvent !== 'None' ? 'ready' : 'off'} />
                 </div>
                 <SpinnerViz rate={state.spinRate} status={state.spinnerStatus} />
+                {spinnerInterlocked && (
+  <div
+    className="text-[8px] font-mono text-center mt-1"
+    style={{ color: '#ffab00' }}
+  >
+    SPINNER INTERLOCK
+  </div>
+)}
               </div>
               <div className="flex gap-1 mt-2">
-                {canLoad && powered && (
-                  <button className="nmr-btn nmr-btn-green text-[10px] flex-1" onClick={() => dispatch({ type: 'LOAD_SAMPLE' })}>
-                    ↓ LOAD
-                  </button>
-                )}
-                {canEject && (
-                  <button className="nmr-btn nmr-btn-amber text-[10px] flex-1" onClick={() => dispatch({ type: 'EJECT_SAMPLE' })}>
-                    ↑ EJECT
-                  </button>
-                )}
-              </div>
+
+  {canLoad && powered && (
+    <button
+      className="nmr-btn nmr-btn-green text-[10px] flex-1"
+      onClick={() => dispatch({ type: 'LOAD_SAMPLE' })}
+    >
+      ↓ LOAD
+    </button>
+  )}
+
+  {canStartSpinner && (
+    <button
+      className="nmr-btn nmr-btn-green text-[10px] flex-1"
+      onClick={() =>
+        dispatch({
+          type: 'SET_SPINNER_STATUS',
+          payload: 'ACCELERATING',
+        })
+      }
+    >
+      ▶ SPIN
+    </button>
+  )}
+
+  {spinnerRunning && (
+    <button
+      className="nmr-btn nmr-btn-amber text-[10px] flex-1"
+      onClick={() =>
+        dispatch({
+          type: 'SET_SPINNER_STATUS',
+          payload: 'DECELERATING',
+        })
+      }
+    >
+      ■ STOP
+    </button>
+  )}
+
+  {spinnerStopping && (
+    <button
+      className="nmr-btn text-[10px] flex-1"
+      disabled
+    >
+      STOPPING {state.spinRate.toFixed(1)} Hz
+    </button>
+  )}
+
+  {canEject && (
+    <button
+      className="nmr-btn nmr-btn-amber text-[10px] flex-1"
+      onClick={() => dispatch({ type: 'EJECT_SAMPLE' })}
+    >
+      ↑ EJECT
+    </button>
+  )}
+
+</div>
             </div>
 
             {/* Lock */}
@@ -488,6 +632,89 @@ export default function HardwareView() {
               </div>
               <div className="mt-1 rounded overflow-hidden" style={{ background: '#030d1a', border: '1px solid #1a3a5c' }}>
                 <LockWaveform level={state.lockLevel} status={state.lockStatus} />
+              {/* Lock Controls */}
+<div className="flex justify-between mt-1">
+  <span className="nmr-label">LOCK QUALITY</span>
+
+  <span
+    className="nmr-value text-[10px]"
+    style={{
+      color:
+        state.lockStatus === 'LOCKED'
+          ? '#00e676'
+          : state.lockStatus === 'OPTIMIZING'
+            ? '#00d4ff'
+            : state.lockStatus === 'DETECTED'
+              ? '#ffab00'
+              : '#3a6a8f',
+    }}
+  >
+    {state.lockStatus === 'LOCKED'
+      ? 'STABLE'
+      : state.lockStatus === 'OPTIMIZING'
+        ? 'OPTIMIZING'
+        : state.lockStatus === 'DETECTED'
+          ? 'SIGNAL DETECTED'
+          : state.lockStatus === 'SEARCHING'
+            ? 'SEARCHING'
+            : 'OFF'}
+  </span>
+</div>
+<div className="flex gap-1 mt-2">
+
+  {state.lockStatus === 'OFF' &&
+    state.power === 'READY' &&
+    state.sampleState === 'POSITIONED' &&
+    state.solvent !== 'None' &&
+    state.probeStatus === 'READY' && (
+      <button
+        className="nmr-btn nmr-btn-green text-[10px] flex-1"
+        onClick={() =>
+          dispatch({
+            type: 'SET_LOCK_STATE',
+            payload: 'SEARCHING',
+          })
+        }
+      >
+        ◉ ACQUIRE LOCK
+      </button>
+  )}
+
+  {state.lockStatus === 'LOST' && (
+    <button
+      className="nmr-btn nmr-btn-amber text-[10px] flex-1"
+      onClick={() =>
+        dispatch({
+          type: 'SET_LOCK_STATE',
+          payload: 'SEARCHING',
+        })
+      }
+    >
+      ↻ REACQUIRE
+    </button>
+  )}
+
+  {(state.lockStatus === 'SEARCHING' ||
+    state.lockStatus === 'DETECTED' ||
+    state.lockStatus === 'OPTIMIZING') && (
+      <button
+        className="nmr-btn text-[10px] flex-1"
+        disabled
+      >
+        LOCK SEARCH {state.lockLevel.toFixed(0)}%
+      </button>
+  )}
+
+  {state.lockStatus === 'LOCKED' && (
+    <button
+      className="nmr-btn nmr-btn-green text-[10px] flex-1"
+      disabled
+    >
+      ✓ LOCKED
+    </button>
+  )}
+
+</div>
               </div>
             </div>
 

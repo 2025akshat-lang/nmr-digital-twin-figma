@@ -317,9 +317,15 @@ function SimulationController() {
         seed: nextScan * 7 + 42,
       });
 
+            // 🚨 FORCE STOP GUARD: अगर आख़िरी स्कैन (16) पूरा हो गया है
       if (nextScan === s.NS) {
         if (acqTimerRef.current) clearInterval(acqTimerRef.current);
+        
+        // वर्कर के भरोसे बैठने के बजाय UI को यहीं सीधे 'COMPLETE' स्टेटस पर सेट कर दें!
+        dispatch({ type: 'SET_ACQ_STATUS', payload: 'COMPLETE' });
+        dispatch({ type: 'ACQUISITION_COMPLETE' });
       }
+
     }, scanInterval);
 
     return () => { 

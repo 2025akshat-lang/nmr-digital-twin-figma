@@ -833,82 +833,17 @@ function nmrReducer(state: NMRState, action: NMRAction): NMRState {
 // ────────────────────────────────────────────────────────────
 // Context
 // ────────────────────────────────────────────────────────────
-// ────────────────────────────────────────────────────────────
-// Context & Web Worker Setup
-// ────────────────────────────────────────────────────────────
 interface NMRContextValue {
   state: NMRState;
   dispatch: React.Dispatch<NMRAction>;
-  triggerSimulation: (type: 'FID' | 'SPECTRUM' | '2D', params: any) => void;
-  isCalculating: boolean;
 }
 
 const NMRContext = createContext<NMRContextValue | null>(null);
 
 export function NMRProvider({ children }: { children: React.ReactNode }) {
   const [state, dispatch] = useReducer(nmrReducer, undefined, makeInitialState);
-  const [isCalculating, setIsCalculating] = React.useState(false);
-  
-  // वर्कर का रेफ (Ref) बनाएँ
-  const workerRef = useRef<Worker | null>(null);
-
-  React.useEffect(() => {
-    // Vite के अनुकूल वेब वर्कर का इन्स्टांस बनाएँ
-    workerRef.current = new Worker(
-      new URL('./simulation.worker.ts', import.meta.url),
-      { type: 'module' }
-    );
-
-      // जब बैकग्राउंड थ्रेड भारी कैलकुलेशन पूरी करके डेटा भेजेगा
-    workerRef.current.onmessage = (event: MessageEvent) => {
-      const { type, success, data, error } = event.data;
-      setIsCalculating(false);
-
-      if (success) {
-        if (type === 'GENERATE_FID') {
-          dispatch({ type: 'SET_FID', payload: data });
-          dispatch({ type: 'SET_ACQ_STATUS', payload: 'COMPLETE' }); // <--- स्टेटस अपडेट गार्ड
-        } else if (type === 'GENERATE_SPECTRUM') {
-          dispatch({ type: 'SET_SPECTRUM', payload: data });
-          dispatch({ type: 'SET_PROCESSING_STATUS', payload: 'COMPLETE' }); // <--- प्रोसेसिंग स्टेटस अपडेट
-          dispatch({ type: 'PROCESSING_COMPLETE' });
-        } else if (type === 'GENERATE_2D') {
-          dispatch({ type: 'SET_2D_DATA', payload: data });
-          dispatch({ type: 'SET_2D_RUNNING', payload: false });
-        }
-      } else {
-        console.error("Simulation Worker Error:", error);
-        dispatch({ type: 'ADD_EVENT', payload: { message: `Simulation Failed: ${error}`, level: 'ERROR' } });
-      }
-    };
-  
-      
-
-    return () => {
-      workerRef.current?.terminate();
-    };
-  }, []);
-
-  // भारी कैलकुलेशन को बैकग्राउंड में भेजने वाला मुख्य फंक्शन
-  const triggerSimulation = useCallback((type: 'FID' | 'SPECTRUM' | '2D', params: any) => {
-    if (!workerRef.current) return;
-
-    setIsCalculating(true);
-
-    if (type === 'FID') {
-      dispatch({ type: 'SET_ACQ_STATUS', payload: 'PREPARING' });
-      workerRef.current.postMessage({ type: 'GENERATE_FID', params });
-    } else if (type === 'SPECTRUM') {
-      dispatch({ type: 'SET_PROCESSING_STATUS', payload: 'APODIZING' });
-      workerRef.current.postMessage({ type: 'GENERATE_SPECTRUM', params });
-    } else if (type === '2D') {
-      dispatch({ type: 'SET_2D_RUNNING', payload: true });
-      workerRef.current.postMessage({ type: 'GENERATE_2D', params });
-    }
-  }, []);
-
   return (
-    <NMRContext.Provider value={{ state, dispatch, triggerSimulation, isCalculating }}>
+    <NMRContext.Provider value={{ state, dispatch }}>
       {children}
     </NMRContext.Provider>
   );
@@ -918,5 +853,4 @@ export function useNMR(): NMRContextValue {
   const ctx = useContext(NMRContext);
   if (!ctx) throw new Error('useNMR must be used within NMRProvider');
   return ctx;
-}
-
+        }
